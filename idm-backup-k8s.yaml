@@ -1,0 +1,544 @@
+---
+# ════════════════════════════════════════════════════════════
+# IdM Backup Manager — Kubernetes Manifests
+# Apply: kubectl apply -f k8s/
+# Namespace: idm-backup
+# ════════════════════════════════════════════════════════════
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: idm-backup
+  labels:
+    app.kubernetes.io/name: idm-backup-manager
+
+---
+# ── ConfigMap ─────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: idm-config
+  namespace: idm-backup
+data:
+  APP_ENV:               "production"
+  DEBUG:                 "false"
+  POSTGRES_DB:           "idm_backup"
+  POSTGRES_USER:         "idm"
+  VAULT_ADDR:            "http://vault:8200"
+  API_V1_PREFIX:         "/api/v1"
+  SSH_CONNECTION_TIMEOUT: "30"
+  SSH_COMMAND_TIMEOUT:    "300"
+  CORS_ORIGINS:          '["https://idm-backup.yourcompany.com"]'
+  FRONTEND_URL:          "https://idm-backup.yourcompany.com"
+
+---
+# ── Secrets (replace values or use external-secrets / sealed-secrets) ───
+# Generate SECRET_KEY: openssl rand -hex 32
+# kubectl create secret generic idm-secrets -n idm-backup \
+#   --from-literal=SECRET_KEY=$(openssl rand -hex 32) \
+#   --from-literal=POSTGRES_PASSWORD=<password> \
+#   --from-literal=REDIS_PASSWORD=<password> \
+#   --from-literal=VAULT_TOKEN=<token>
+apiVersion: v1
+kind: Secret
+metadata:
+  name: idm-secrets
+  namespace: idm-backup
+type: Opaque
+stringData:
+  SECRET_KEY:               "REPLACE_WITH_openssl_rand_hex_32"
+  POSTGRES_PASSWORD:        "REPLACE_WITH_strong_password"
+  REDIS_PASSWORD:           "REPLACE_WITH_strong_password"
+  VAULT_TOKEN:              "REPLACE_WITH_vault_token"
+  BOOTSTRAP_ADMIN_EMAIL:    "admin@yourcompany.com"
+  BOOTSTRAP_ADMIN_PASSWORD: "REPLACE_WITH_strong_password"
+
+---
+# ════════════════════════════════════════════════════════════
+# POSTGRES
+# ════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: idm-backup
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: idm-backup
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: POSTGRES_USER }
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: POSTGRES_DB }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: idm-secrets, key: POSTGRES_PASSWORD }
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "idm", "-d", "idm_backup"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "idm", "-d", "idm_backup"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests: { memory: "256Mi", cpu: "100m" }
+            limits:   { memory: "1Gi",   cpu: "500m" }
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: idm-backup
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
+
+---
+# ════════════════════════════════════════════════════════════
+# REDIS
+# ════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: idm-backup
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: idm-backup
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --requirepass
+            - $(REDIS_PASSWORD)
+            - --maxmemory
+            - 256mb
+            - --maxmemory-policy
+            - allkeys-lru
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: idm-secrets, key: REDIS_PASSWORD }
+          volumeMounts:
+            - name: redisdata
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "--no-auth-warning", "-a", "$(REDIS_PASSWORD)", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { memory: "64Mi",  cpu: "50m" }
+            limits:   { memory: "512Mi", cpu: "200m" }
+      volumes:
+        - name: redisdata
+          persistentVolumeClaim:
+            claimName: redis-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: idm-backup
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
+  type: ClusterIP
+
+---
+# ════════════════════════════════════════════════════════════
+# VAULT
+# ════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-pvc
+  namespace: idm-backup
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vault
+  namespace: idm-backup
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vault
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      securityContext:
+        runAsNonRoot: false  # Vault dev mode needs root briefly for IPC_LOCK
+      containers:
+        - name: vault
+          image: hashicorp/vault:1.17
+          ports:
+            - containerPort: 8200
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]
+          env:
+            - name: VAULT_DEV_ROOT_TOKEN_ID
+              valueFrom:
+                secretKeyRef: { name: idm-secrets, key: VAULT_TOKEN }
+            - name: VAULT_DEV_LISTEN_ADDRESS
+              value: "0.0.0.0:8200"
+            - name: VAULT_LOG_LEVEL
+              value: "warn"
+          volumeMounts:
+            - name: vaultdata
+              mountPath: /vault/data
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/health
+              port: 8200
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests: { memory: "64Mi",  cpu: "50m" }
+            limits:   { memory: "256Mi", cpu: "200m" }
+      volumes:
+        - name: vaultdata
+          persistentVolumeClaim:
+            claimName: vault-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: idm-backup
+spec:
+  selector:
+    app: vault
+  ports:
+    - port: 8200
+      targetPort: 8200
+  type: ClusterIP
+
+---
+# ════════════════════════════════════════════════════════════
+# BACKEND
+# ════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: idm-backup
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      initContainers:
+        # Run alembic migrations before backend starts
+        - name: db-migrate
+          image: your-registry/idm-backend:latest  # replace with your image
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: POSTGRES_USER }
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: POSTGRES_DB }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: idm-secrets, key: POSTGRES_PASSWORD }
+      containers:
+        - name: backend
+          image: your-registry/idm-backend:latest  # replace with your image
+          ports:
+            - containerPort: 8000
+          env:
+            - name: APP_ENV
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: APP_ENV }
+            - name: DEBUG
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: DEBUG }
+            - name: VAULT_ADDR
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: VAULT_ADDR }
+            - name: CORS_ORIGINS
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: CORS_ORIGINS }
+            - name: FRONTEND_URL
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: FRONTEND_URL }
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef: { name: idm-secrets, key: SECRET_KEY }
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef: { name: idm-secrets, key: VAULT_TOKEN }
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: POSTGRES_USER }
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef: { name: idm-config, key: POSTGRES_DB }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: idm-secrets, key: POSTGRES_PASSWORD }
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: idm-secrets, key: REDIS_PASSWORD }
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)"
+            - name: REDIS_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/0"
+          volumeMounts:
+            - name: ssh-keys
+              mountPath: /home/appuser/.ssh
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /api/v1/stats/overview
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/v1/stats/overview
+              port: 8000
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            requests: { memory: "256Mi", cpu: "100m" }
+            limits:   { memory: "1Gi",   cpu: "1000m" }
+      volumes:
+        - name: ssh-keys
+          secret:
+            secretName: idm-ssh-keys
+            defaultMode: 0400
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: idm-backup
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+
+---
+# ════════════════════════════════════════════════════════════
+# FRONTEND
+# ════════════════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: idm-backup
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: your-registry/idm-frontend:latest  # replace with your image
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests: { memory: "32Mi",  cpu: "10m" }
+            limits:   { memory: "128Mi", cpu: "100m" }
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: idm-backup
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP
+
+---
+# ════════════════════════════════════════════════════════════
+# INGRESS  (nginx ingress controller required)
+# ════════════════════════════════════════════════════════════
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: idm-backup-ingress
+  namespace: idm-backup
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    # Uncomment for TLS with cert-manager:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  # Uncomment for TLS:
+  # tls:
+  #   - hosts: [idm-backup.yourcompany.com]
+  #     secretName: idm-backup-tls
+  rules:
+    - host: idm-backup.yourcompany.com  # replace with your domain
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+
+---
+# ════════════════════════════════════════════════════════════
+# SSH KEYS SECRET  (for IdM server connections)
+# Create with:
+#   kubectl create secret generic idm-ssh-keys -n idm-backup \
+#     --from-file=id_rsa=~/.ssh/id_rsa \
+#     --from-file=id_rsa.pub=~/.ssh/id_rsa.pub \
+#     --from-file=known_hosts=~/.ssh/known_hosts
+# ════════════════════════════════════════════════════════════
+apiVersion: v1
+kind: Secret
+metadata:
+  name: idm-ssh-keys
+  namespace: idm-backup
+type: Opaque
+stringData:
+  id_rsa:     "REPLACE_WITH_private_key_content"
+  id_rsa.pub: "REPLACE_WITH_public_key_content"
+  known_hosts: "REPLACE_WITH_known_hosts_content"

@@ -1,0 +1,156 @@
+#!/bin/bash
+IFS=$'\n\t'
+
+IPA_BACKUP_DIR="{{ backup_dir }}"
+S3_MOUNT_DIR="{{ s3_mount_dir }}"
+KEEP_COUNT={{ retention_count }}
+INVALID_DIR_SUFFIX="_invalid"
+
+log() {
+    printf "%s - %s\n" "$(date '+%Y-%m-%d %H:%M:%S')" "$1"
+}
+
+validate_backup() {
+    local backup_file sha_file
+    backup_file="${1}"
+    sha_file="${backup_file}.sha256"
+
+    if [[ ! -f "${sha_file}" || ! -f "${backup_file}" ]]; then
+        printf "SHA256 file missing for: %s\n" "$(basename "${backup_file}")" >&2
+        return 1
+    fi
+
+    if cd "$(dirname "${backup_file}")" && ! sha256sum -c "$(basename "${sha_file}")"; then
+        printf "SHA256 validation failed for: %s\n" "$(basename "${backup_file}")" >&2
+        return 1
+    fi
+
+    log "SHA256 validation passed: $(basename "${backup_file}")"
+    return 0
+}
+
+{% raw %}
+find_backup_archives_by_name_timestamp() {
+    local directory pattern
+    directory="${1}"
+    pattern="${2}"
+
+    find "${directory}" -mindepth 1 -maxdepth 1 \( -type f -o -type d \) -name "${pattern}" 2>/dev/null |
+    while read -r path; do
+        local name ts
+        name=$(basename "${path}")
+        
+        if [[ "${name}" =~ ipa-full-([0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2})$ ]]; then
+            ts="${BASH_REMATCH[1]}"
+        elif [[ "${name}" =~ ipa-([0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2})\.tar\.gz\.gpg$ ]]; then
+            ts="${BASH_REMATCH[1]}-00"
+        else
+            continue
+        fi
+
+        ts="${ts//-/}"
+        printf "%s %s\n" "${ts}" "${path}"
+    done | sort -rk1 | awk '{$1=""; sub(/^ /,""); print}'
+}
+
+move_failed_backup() {
+    local file dest_dir sha_file
+    file="${1}"
+    sha_file="${file}.sha256"
+    dest_dir="$(dirname "${file}")/${INVALID_DIR_SUFFIX}"
+
+    mkdir -p -- "${dest_dir}"
+
+    if mv -n -- "${file}" "${dest_dir}/"; then
+        log "Moved failed backup to: ${dest_dir}/$(basename "${file}")"
+    fi
+
+    if [[ -f "${sha_file}" ]]; then
+        mv -n -- "${sha_file}" "${dest_dir}/" 2>/dev/null
+    fi
+}
+
+cleanup_directory() {
+    local dir pattern desc
+    dir="${1}"
+    pattern="${2}"
+    desc="${3}"
+
+    if [[ ! -d "${dir}" ]]; then
+        printf "Directory not found: %s\n" "${dir}" >&2
+        return 1
+    fi
+
+    log "Cleaning up ${desc} (keeping latest ${KEEP_COUNT})"
+
+    local all_files=()
+    if ! mapfile -t all_files < <(find_backup_archives_by_name_timestamp "${dir}" "${pattern}"); then
+        printf "Failed to enumerate backups in: %s\n" "${dir}" >&2
+        return 1
+    fi
+
+    if [[ ${#all_files[@]} -le ${KEEP_COUNT} ]]; then
+        log "No cleanup needed - only ${#all_files[@]} ${desc} found"
+        return
+    fi
+
+    local -a files=("${all_files[@]:1}")
+
+    local validated_keep_index=-1
+    for ((i=0; i<${#files[@]}; i++)); do
+        local current="${files[${i}]}"
+        if [[ -f "${current}" ]]; then
+            if validate_backup "${current}"; then
+                validated_keep_index="${i}"
+                break
+            else
+                move_failed_backup "${current}"
+            fi
+        else
+            validated_keep_index="${i}"
+            break
+        fi
+    done
+
+    if [[ ${validated_keep_index} -lt 0 ]]; then
+        printf "No valid backup found to keep in %s\n" "${dir}" >&2
+        return 1
+    fi
+
+    local start_delete=$((validated_keep_index + KEEP_COUNT))
+    local removed=0
+
+    if [[ ${start_delete} -lt ${#files[@]} ]]; then
+        for ((i=start_delete; i<${#files[@]}; i++)); do
+            local file_to_delete sha_file
+            file_to_delete="${files[${i}]}"
+            sha_file="${file_to_delete}.sha256"
+
+            log "Removing: $(basename "${file_to_delete}")"
+            rm -rf -- "${file_to_delete}"
+            [[ -f "${sha_file}" ]] && rm -f -- "${sha_file}"
+            ((removed++))
+        done
+    fi
+
+    log "Cleanup completed for ${desc} - removed ${removed} old backups"
+}
+{% endraw %}
+
+main() {
+    log "Starting IPA backup cleanup"
+
+    if ! cleanup_directory "${S3_MOUNT_DIR}" "ipa-*.tar.gz.gpg" "encrypted backups"; then
+        printf "Failed to clean up encrypted backups in %s\n" "${S3_MOUNT_DIR}" >&2
+        return 1
+    fi
+
+    if ! cleanup_directory "${IPA_BACKUP_DIR}" "ipa-full-*" "original IPA backups"; then
+        printf "Failed to clean up original IPA backups in %s\n" "${IPA_BACKUP_DIR}" >&2
+        return 1
+    fi
+
+    log "IPA backup cleanup completed successfully"
+}
+
+main "$@" || exit $?

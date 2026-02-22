@@ -1,0 +1,8 @@
+[Unit]
+Description="IdM/FreeIPA backup cleanup"
+After=ipa-backup.service
+
+[Service]
+Type=oneshot
+ExecStart=/var/lib/ipa/ipa-backup-retention.sh
+User=root

@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.log
+.DS_Store
+node_modules/
+frontend/dist/
+backend/htmlcov/
+backend/.coverage
+*.egg-info/

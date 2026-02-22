@@ -1,0 +1,10 @@
+[Unit]
+Description="IdM/FreeIPA backup timer"
+
+[Timer]
+OnCalendar={{ schedule }}
+Persistent=true
+Unit=ipa-backup.service
+
+[Install]
+WantedBy=timers.target

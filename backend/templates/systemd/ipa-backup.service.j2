@@ -1,0 +1,14 @@
+[Unit]
+Description="IdM/FreeIPA backup"
+
+[Service]
+WorkingDirectory={{ backup_dir }}
+Environment=IPA_BACKUP_DIR={{ backup_dir }}
+Environment=S3_MOUNT_DIR={{ s3_mount_dir }}
+
+ExecStart=/bin/bash -c 'export timestamp=$$(date +"%%Y-%%m-%%d-%%H-%%M"); echo "$${timestamp}"; /sbin/ipa-backup && /bin/tar --directory "$(/bin/ls -1dt ${IPA_BACKUP_DIR}/*/ | /bin/head -n1)" --create --file - . | /bin/gzip --best | /bin/gpg --symmetric --cipher-algo AES256 --passphrase-file "${CREDENTIALS_DIRECTORY}"/backup-encryption-password --no-symkey-cache --batch --pinentry-mode loopback --output "${S3_MOUNT_DIR}"/ipa-$${timestamp}.tar.gz.gpg && /bin/sha256sum "${S3_MOUNT_DIR}"/ipa-$${timestamp}.tar.gz.gpg > "${S3_MOUNT_DIR}"/ipa-$${timestamp}.tar.gz.gpg.sha256; unset timestamp'
+ExecStartPost=/bin/systemctl restart --no-block ipa-backup-retention.service
+Type=oneshot
+
+[Install]
+WantedBy=multi-user.target
