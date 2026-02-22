@@ -200,7 +200,9 @@ class JobMonitorService:
                 status=run_data.get('status', 'FAILED'),
                 started_at=run_data['started_at'],
                 completed_at=run_data.get('completed_at'),
-                log_output=run_data['log_output'][:50000],  # Limit log size
+                log_output=run_data["log_output"][:50000],
+                backup_size_bytes=run_data.get("backup_size_bytes"),
+                compressed_size_bytes=run_data.get("compressed_size_bytes"),
                 error_message=run_data.get('error_message'),
             )
             db.add(job)

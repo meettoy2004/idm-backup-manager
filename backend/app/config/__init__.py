@@ -1,44 +1,40 @@
-from pydantic_settings import BaseSettings
+import os
 from typing import List
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    APP_NAME:   str  = "IDM Backup Manager"
-    APP_ENV:    str  = "development"
-    DEBUG:      bool = True
-    SECRET_KEY: str  = "change-this-in-production"
-
-    DATABASE_URL:   str
-    VAULT_ADDR:     str = "http://127.0.0.1:8200"
-    VAULT_TOKEN:    str = "dev-root-token"
-    VAULT_SSH_PATH: str = "secret/ssh/service-account"
-    VAULT_DB_PATH:  str = "secret/database"
-    REDIS_URL:      str = "redis://localhost:6379/0"
-    API_V1_PREFIX:  str = "/api/v1"
-
-    SSH_CONNECTION_TIMEOUT: int = 30
-    SSH_COMMAND_TIMEOUT:    int = 300
-
-    CORS_ORIGINS: List[str] = ["http://localhost:5173","http://localhost:5174","http://localhost:3000"]
-
-    FRONTEND_URL:             str = "http://localhost:5174"
-    BOOTSTRAP_ADMIN_EMAIL:    str = "admin@local"
+    # App
+    APP_ENV: str = "development"
+    DEBUG: bool = True
+    SECRET_KEY: str = "dev-secret-key-change-in-production"
+    
+    # Database
+    DATABASE_URL: str = "postgresql://idm:idm_dev_password@postgres:5432/idm_backup"
+    
+    # Redis
+    REDIS_URL: str = "redis://:redis_dev_password@redis:6379/0"
+    
+    # Vault
+    VAULT_ADDR: str = "http://vault:8200"
+    VAULT_TOKEN: str = "dev-root-token"
+    
+    # CORS - Allow requests from these origins (comma-separated string, use "*" for all)
+    CORS_ORIGINS_STR: str = "*"
+    
+    # Bootstrap admin
+    BOOTSTRAP_ADMIN_EMAIL: str = "admin@local"
     BOOTSTRAP_ADMIN_PASSWORD: str = "changeme123"
-
-    # OIDC — all optional
-    OIDC_GOOGLE_CLIENT_ID:     str = ""
-    OIDC_GOOGLE_CLIENT_SECRET: str = ""
-    OIDC_AZURE_CLIENT_ID:      str = ""
-    OIDC_AZURE_CLIENT_SECRET:  str = ""
-    OIDC_AZURE_TENANT_ID:      str = "common"
-    OIDC_CUSTOM_CLIENT_ID:     str = ""
-    OIDC_CUSTOM_CLIENT_SECRET: str = ""
-    OIDC_CUSTOM_AUTH_URL:      str = ""
-    OIDC_CUSTOM_TOKEN_URL:     str = ""
-    OIDC_CUSTOM_USERINFO_URL:  str = ""
-    OIDC_CUSTOM_LABEL:         str = "SSO"
-
+    
+    @property
+    def CORS_ORIGINS(self) -> List[str]:
+        """Parse CORS_ORIGINS from comma-separated string or wildcard"""
+        if self.CORS_ORIGINS_STR == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.CORS_ORIGINS_STR.split(",")]
+    
     class Config:
+        case_sensitive = True
         env_file = ".env"
-        extra   = "ignore"    # ignore any extra fields in .env
+        env_prefix = ""
 
 settings = Settings()

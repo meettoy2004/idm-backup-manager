@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 from ..config.database import Base
 
 class User(Base):
@@ -17,3 +18,9 @@ class User(Base):
     requires_password_change = Column(Boolean, default=False)
     last_login               = Column(DateTime(timezone=True), nullable=True)
     created_at               = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Phase 1: New relationships
+    organizations         = relationship("UserOrganization", back_populates="user", cascade="all, delete-orphan")
+    notification_settings = relationship("NotificationSetting", back_populates="user", cascade="all, delete-orphan")
+    restore_operations    = relationship("RestoreOperation", back_populates="requester")
+    dr_templates          = relationship("DRTemplate", back_populates="creator")

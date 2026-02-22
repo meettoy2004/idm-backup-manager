@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, BigInteger
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from ..config.database import Base
@@ -15,7 +15,13 @@ class BackupJob(Base):
     log_output    = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Relationships - use string references to avoid circular imports
+
+    # Phase 1: Backup size tracking
+    backup_size_bytes      = Column(BigInteger, nullable=True)
+    compressed_size_bytes  = Column(BigInteger, nullable=True)
+
+    # Relationships
     server = relationship("Server", back_populates="backup_jobs")
     config = relationship("BackupConfig", back_populates="backup_jobs")
+    verification_logs  = relationship("VerificationLog", back_populates="job", cascade="all, delete-orphan")
+    restore_operations = relationship("RestoreOperation", back_populates="job")
