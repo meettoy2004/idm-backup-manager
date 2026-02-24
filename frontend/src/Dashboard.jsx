@@ -7,9 +7,17 @@ import { statsApi, serversApi } from './api';
 
 const COLORS = { success: '#4CAF50', failed: '#f44336', pending: '#FF9800' };
 const PIE_COLORS = ['#4CAF50', '#f44336', '#FF9800', '#2196F3'];
-const SYS_PAGE_SIZE   = 10;   // servers per page in System Health (limits simultaneous SSH connections)
-const CHART_TOP_N     = 10;   // max servers shown in Success Rate chart
-const HEALTH_PAGE_SIZE = 15;  // rows per page in Server Health Status table
+const SYS_PAGE_SIZE = 10;   // servers per page in System Health (limits simultaneous SSH connections)
+const CHART_TOP_N   = 10;   // max servers shown in Success Rate chart
+
+const HEALTH_STATUS_COLORS = {
+  success: '#4CAF50', failed: '#f44336', never: '#9E9E9E',
+  running: '#2196F3', pending: '#FF9800',
+};
+const HEALTH_STATUS_LABELS = {
+  success: 'Success', failed: 'Failed', never: 'No Jobs',
+  running: 'Running', pending: 'Pending',
+};
 
 function Pager({ page, total, pageSize, onChange }) {
   const pages = Math.ceil(total / pageSize);
@@ -54,21 +62,6 @@ function ChartCard({ title, children, controls }) {
   );
 }
 
-function HealthBadge({ status }) {
-  const cfg = {
-    success: { bg: '#E8F5E9', color: '#2E7D32', label: '✓ Success' },
-    failed:  { bg: '#FFEBEE', color: '#C62828', label: '✗ Failed'  },
-    never:   { bg: '#F5F5F5', color: '#888888', label: '— No Jobs' },
-    running: { bg: '#E3F2FD', color: '#1565C0', label: '⟳ Running' },
-    pending: { bg: '#FFF3E0', color: '#E65100', label: '… Pending' },
-  }[status] || { bg: '#F5F5F5', color: '#888', label: status };
-  return (
-    <span style={{ padding: '3px 10px', borderRadius: 12, fontSize: 12,
-      fontWeight: 600, background: cfg.bg, color: cfg.color }}>
-      {cfg.label}
-    </span>
-  );
-}
 
 function DiskBar({ pct }) {
   const num = parseInt(pct) || 0;
@@ -103,7 +96,6 @@ export default function Dashboard() {
   const [sysLoading,  setSysLoading]  = useState(false);
   const [sysPage,     setSysPage]     = useState(0);
   const [allServers,  setAllServers]  = useState([]);
-  const [healthPage,  setHealthPage]  = useState(0);
 
   useEffect(() => { loadAll(); }, [timeRange]);
   useEffect(() => {
@@ -213,37 +205,59 @@ export default function Dashboard() {
         <StatCard label="Success Rate"      value={`${jobs_30d.success_rate}%`} sub="last 30 days"                  color={jobs_30d.success_rate >= 90 ? '#4CAF50' : jobs_30d.success_rate >= 70 ? '#FF9800' : '#f44336'} />
       </div>
 
-      {/* Server Health & Pie Chart */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 24, marginBottom: 0 }}>
-        <ChartCard title={`Server Health Status${server_health.length > HEALTH_PAGE_SIZE ? ` (${server_health.length} servers)` : ''}`}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: '#F5F5F5' }}>
-                {['Server', 'Hostname', 'Last Backup', 'Status', 'Error'].map(h => (
-                  <th key={h} style={{ padding: '10px 12px', textAlign: 'left', color: '#555', fontWeight: 600, borderBottom: '1px solid #eee' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {server_health.slice(healthPage * HEALTH_PAGE_SIZE, (healthPage + 1) * HEALTH_PAGE_SIZE).map((s, i) => (
-                <tr key={s.server_id} style={{ background: i % 2 === 0 ? 'white' : '#FAFAFA' }}>
-                  <td style={{ padding: '10px 12px', fontWeight: 600, color: '#1F4E79' }}>{s.server_name}</td>
-                  <td style={{ padding: '10px 12px', color: '#666', fontFamily: 'monospace', fontSize: 12 }}>{s.hostname}</td>
-                  <td style={{ padding: '10px 12px', color: '#888', fontSize: 12 }}>{formatDate(s.last_job_time)}</td>
-                  <td style={{ padding: '10px 12px' }}><HealthBadge status={s.last_job_status} /></td>
-                  <td style={{ padding: '10px 12px', color: '#f44336', fontSize: 12, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {s.last_job_error || '—'}
-                  </td>
-                </tr>
-              ))}
-              {server_health.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: 24, textAlign: 'center', color: '#aaa' }}>No servers configured</td></tr>
-              )}
-            </tbody>
-          </table>
-          <Pager page={healthPage} total={server_health.length} pageSize={HEALTH_PAGE_SIZE} onChange={setHealthPage} />
+      {/* Two pie charts side by side */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 0 }}>
+
+        {/* Server Health Status — aggregated pie */}
+        <ChartCard title={`Server Health Status (${server_health.length} servers)`}>
+          {(() => {
+            const counts = server_health.reduce((acc, s) => {
+              acc[s.last_job_status] = (acc[s.last_job_status] || 0) + 1;
+              return acc;
+            }, {});
+            const healthPieData = Object.entries(counts)
+              .map(([status, value]) => ({ name: HEALTH_STATUS_LABELS[status] || status, value, status }))
+              .sort((a, b) => b.value - a.value);
+            const failedServers = server_health.filter(s => s.last_job_status === 'failed');
+            return server_health.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 60, color: '#aaa' }}>No servers configured</div>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie data={healthPieData} cx="50%" cy="50%" outerRadius={80} dataKey="value"
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                      {healthPieData.map((d, i) => <Cell key={i} fill={HEALTH_STATUS_COLORS[d.status] || '#999'} />)}
+                    </Pie>
+                    <Tooltip formatter={(val, name) => [`${val} servers`, name]} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
+                  {healthPieData.map(d => (
+                    <div key={d.name} style={{ fontSize: 12, color: '#666', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: HEALTH_STATUS_COLORS[d.status] || '#999', display: 'inline-block' }} />
+                      {d.name}: {d.value}
+                    </div>
+                  ))}
+                </div>
+                {failedServers.length > 0 && (
+                  <div style={{ marginTop: 14, borderTop: '1px solid #FFEBEE', paddingTop: 12 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#C62828', marginBottom: 6 }}>Servers with failures:</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {failedServers.map(s => (
+                        <span key={s.server_id} style={{ fontSize: 11, background: '#FFEBEE', color: '#C62828', padding: '2px 8px', borderRadius: 12 }}>
+                          {s.server_name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </ChartCard>
 
+        {/* Job Outcomes pie */}
         <ChartCard title="Job Outcomes (30 days)">
           {pieData.length > 0 ? (
             <>
