@@ -183,7 +183,7 @@ export default function Dashboard() {
   );
 
   return (
-    <div>
+    <div style={{ padding: '1.5rem' }}>
       {/* Header */}
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, color: '#1F4E79', fontSize: 22 }}>Monitoring Dashboard</h2>

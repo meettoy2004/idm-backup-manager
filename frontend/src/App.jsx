@@ -77,52 +77,69 @@ export default function App() {
   const badge = ROLE_BADGE[user.role] || ROLE_BADGE.viewer;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0f172a", color: "#f1f5f9", fontFamily: "system-ui, sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#1e293b",
-        padding: "0 1.5rem", borderBottom: "1px solid #334155", height: 52, overflowX: "auto" }}>
-        <span style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 15, marginRight: 16, whiteSpace: "nowrap" }}>
-          🔐 IdM Backup
-        </span>
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            background: tab === t.id ? "#3b82f6" : "transparent",
-            color: tab === t.id ? "#fff" : "#94a3b8",
-            border: "none", borderRadius: 6, padding: "6px 12px",
-            fontSize: 13, cursor: "pointer", fontWeight: tab === t.id ? 600 : 400,
-            whiteSpace: "nowrap",
-          }}>{t.label}</button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <span style={{ color: badge.color, fontSize: 11, fontWeight: 700,
-          background: "#0f172a", borderRadius: 4, padding: "2px 8px",
-          marginRight: 8, letterSpacing: "0.03em", whiteSpace: "nowrap" }}>
-          {badge.icon} {badge.label}
-        </span>
-        <span style={{ color: "#64748b", fontSize: 13, marginRight: 12, whiteSpace: "nowrap" }}>{user.username}</span>
-        <button onClick={handleLogout} style={{ background: "#334155", color: "#94a3b8",
-          border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
-          Sign out
-        </button>
+    <div style={{ display: "flex", minHeight: "100vh", background: "#0f172a", color: "#f1f5f9", fontFamily: "system-ui, sans-serif" }}>
+
+      {/* ── Sidebar ── */}
+      <div style={{
+        width: 220, minWidth: 220, background: "#1e293b", borderRight: "1px solid #334155",
+        display: "flex", flexDirection: "column",
+        position: "sticky", top: 0, height: "100vh", overflowY: "auto",
+      }}>
+        {/* Logo */}
+        <div style={{ padding: "18px 16px 14px", borderBottom: "1px solid #334155" }}>
+          <span style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 15 }}>🔐 IdM Backup</span>
+        </div>
+
+        {/* Nav items */}
+        <nav style={{ flex: 1, padding: "10px 8px", display: "flex", flexDirection: "column", gap: 2 }}>
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => setTab(t.id)} style={{
+              background: tab === t.id ? "#3b82f6" : "transparent",
+              color: tab === t.id ? "#fff" : "#94a3b8",
+              border: "none", borderRadius: 6, padding: "8px 12px",
+              fontSize: 13, cursor: "pointer", fontWeight: tab === t.id ? 600 : 400,
+              textAlign: "left", width: "100%",
+            }}>{t.label}</button>
+          ))}
+        </nav>
+
+        {/* User + logout */}
+        <div style={{ padding: "12px 14px", borderTop: "1px solid #334155" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <span style={{ color: badge.color, fontSize: 11, fontWeight: 700,
+              background: "#0f172a", borderRadius: 4, padding: "2px 6px", letterSpacing: "0.03em" }}>
+              {badge.icon} {badge.label}
+            </span>
+          </div>
+          <div style={{ color: "#64748b", fontSize: 12, marginBottom: 8 }}>{user.username}</div>
+          <button onClick={handleLogout} style={{ background: "#334155", color: "#94a3b8",
+            border: "none", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", width: "100%" }}>
+            Sign out
+          </button>
+        </div>
       </div>
 
-      {tab === "dashboard"     && <Dashboard />}
-      {tab === "audit"         && <AuditLog />}
-      {tab === "settings"      && <Settings user={user} />}
-      {tab === "users"         && <Users />}
-      {tab === "notifications" && <div style={{ padding: "1.5rem" }}><NotificationSettings /></div>}
-      {tab === "dr-templates"  && <div style={{ padding: "1.5rem" }}><DRTemplates /></div>}
-      {tab === "restores"      && <RestoresTab servers={servers} />}
-      {tab === "servers"       && <ServersTab  servers={servers} setServers={setServers} setJobs={setJobs} api={api} canWrite={can(user,"write")} onRestore={(id, name) => setRestoreTarget({ serverId: id, serverName: name })} />}
-      {tab === "backups"       && <BackupsTab  backups={backups} servers={servers} setBackups={setBackups} api={api} canWrite={can(user,"write")} />}
-      {tab === "jobs"          && <JobsTab     jobs={jobs} servers={servers} setJobs={setJobs} api={api} canWrite={can(user,"write")} />}
+      {/* ── Main content ── */}
+      <div style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
+        {tab === "dashboard"     && <Dashboard />}
+        {tab === "audit"         && <AuditLog />}
+        {tab === "settings"      && <Settings user={user} />}
+        {tab === "users"         && <Users />}
+        {tab === "notifications" && <div style={{ padding: "1.5rem" }}><NotificationSettings /></div>}
+        {tab === "dr-templates"  && <div style={{ padding: "1.5rem" }}><DRTemplates /></div>}
+        {tab === "restores"      && <RestoresTab servers={servers} />}
+        {tab === "servers"       && <ServersTab  servers={servers} setServers={setServers} setJobs={setJobs} api={api} canWrite={can(user,"write")} onRestore={(id, name) => setRestoreTarget({ serverId: id, serverName: name })} />}
+        {tab === "backups"       && <BackupsTab  backups={backups} servers={servers} setBackups={setBackups} api={api} canWrite={can(user,"write")} />}
+        {tab === "jobs"          && <JobsTab     jobs={jobs} servers={servers} setJobs={setJobs} api={api} canWrite={can(user,"write")} />}
 
-      {restoreTarget && (
-        <RestoreWizard
-          serverId={restoreTarget.serverId}
-          serverName={restoreTarget.serverName}
-          onClose={() => setRestoreTarget(null)}
-        />
-      )}
+        {restoreTarget && (
+          <RestoreWizard
+            serverId={restoreTarget.serverId}
+            serverName={restoreTarget.serverName}
+            onClose={() => setRestoreTarget(null)}
+          />
+        )}
+      </div>
     </div>
   );
 }
