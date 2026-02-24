@@ -80,6 +80,8 @@ services:
       dockerfile: Dockerfile
     container_name: idm-backend
     restart: unless-stopped
+    command: >
+      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2"
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-idm}:${POSTGRES_PASSWORD:-idm_dev_password}@postgres:5432/${POSTGRES_DB:-idm_backup}
