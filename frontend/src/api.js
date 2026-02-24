@@ -20,6 +20,13 @@ export const serversApi = {
   update:              (id, data) => api.put(`/servers/${id}/`, data),
   delete:              (id) => api.delete(`/servers/${id}/`),
   checkSubscription:   (id) => api.get(`/servers/${id}/check-subscription/`),
+  systemStatus:        (id) => api.get(`/servers/${id}/system-status`),
+};
+
+export const settingsApi = {
+  getSmtp:  () => api.get('/settings/smtp'),
+  saveSmtp: (data) => api.put('/settings/smtp', data),
+  testSmtp: () => api.post('/settings/smtp/test'),
 };
 
 export const backupsApi = {

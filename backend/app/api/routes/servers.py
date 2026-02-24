@@ -108,6 +108,76 @@ def delete_server(server_id: int, request: Request, db: Session = Depends(get_db
         ip_address=request.client.host)
     return {"message": f"Server {name} deleted"}
 
+@router.get("/{server_id}/system-status")
+@router.get("/{server_id}/system-status/")
+def get_server_system_status(server_id: int, db: Session = Depends(get_db)):
+    """SSH into server and return disk usage + IPA service status."""
+    from ...services.ssh_service import SSHService
+
+    server = db.query(Server).filter(Server.id == server_id).first()
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    try:
+        ssh = SSHService()
+        client = ssh.connect(server.hostname, server.port, server.username)
+
+        _, root_out,   _ = ssh.execute_command(client, "df -hT /")
+        _, backup_out, _ = ssh.execute_command(client, "df -h /var/lib/ipa/backup 2>/dev/null || true")
+        _, ipa_out,    _ = ssh.execute_command(client, "sudo ipactl status 2>&1 || true")
+
+        client.close()
+
+        return {
+            "server_id":   server_id,
+            "server_name": server.name,
+            "hostname":    server.hostname,
+            "root_disk":   _parse_df(root_out),
+            "backup_disk": _parse_df(backup_out),
+            "ipa_services": _parse_ipactl(ipa_out),
+            "error": None,
+        }
+    except Exception as e:
+        logger.warning("system-status failed for server %s: %s", server_id, e)
+        return {
+            "server_id":   server_id,
+            "server_name": server.name,
+            "hostname":    server.hostname,
+            "root_disk":   None,
+            "backup_disk": None,
+            "ipa_services": [],
+            "error": str(e),
+        }
+
+
+def _parse_df(output: str):
+    """Parse the first data line of df output into a dict."""
+    lines = [l for l in output.strip().splitlines() if l and not l.startswith("Filesystem")]
+    if not lines:
+        return None
+    parts = lines[0].split()
+    # df -hT has 7 cols (Filesystem Type Size Used Avail Use% Mount)
+    # df -h  has 6 cols (Filesystem     Size Used Avail Use% Mount)
+    if len(parts) == 7:
+        return {"filesystem": parts[0], "type": parts[1], "size": parts[2],
+                "used": parts[3], "avail": parts[4], "use_pct": parts[5], "mount": parts[6]}
+    if len(parts) >= 6:
+        return {"filesystem": parts[0], "type": None, "size": parts[1],
+                "used": parts[2], "avail": parts[3], "use_pct": parts[4], "mount": parts[5]}
+    return None
+
+
+def _parse_ipactl(output: str):
+    """Parse ipactl status output into [{service, status}]."""
+    services = []
+    for line in output.strip().splitlines():
+        line = line.strip()
+        if ": " in line and not line.lower().startswith("redirect"):
+            svc, _, st = line.partition(": ")
+            services.append({"service": svc.strip(), "status": st.strip()})
+    return services
+
+
 @router.get("/{server_id}/check-subscription")
 @router.get("/{server_id}/check-subscription/")
 def check_subscription_manager(server_id: int, db: Session = Depends(get_db)):

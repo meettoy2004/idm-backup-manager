@@ -3,7 +3,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
-import { statsApi } from './api';
+import { statsApi, serversApi } from './api';
 
 const COLORS = { success: '#4CAF50', failed: '#f44336', pending: '#FF9800' };
 const PIE_COLORS = ['#4CAF50', '#f44336', '#FF9800', '#2196F3'];
@@ -53,6 +53,16 @@ function HealthBadge({ status }) {
   );
 }
 
+function DiskBar({ pct }) {
+  const num = parseInt(pct) || 0;
+  const color = num >= 90 ? '#f44336' : num >= 75 ? '#FF9800' : '#4CAF50';
+  return (
+    <div style={{ background: '#e5e7eb', borderRadius: 4, height: 8, overflow: 'hidden' }}>
+      <div style={{ width: `${Math.min(num, 100)}%`, height: '100%', background: color, borderRadius: 4, transition: 'width 0.3s' }} />
+    </div>
+  );
+}
+
 function formatDuration(seconds) {
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60), s = seconds % 60;
@@ -72,8 +82,30 @@ export default function Dashboard() {
   const [durations,   setDurations]   = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [timeRange,   setTimeRange]   = useState(30);
+  const [sysHealth,   setSysHealth]   = useState([]);   // [{server_id, server_name, hostname, root_disk, backup_disk, ipa_services, error}]
+  const [sysLoading,  setSysLoading]  = useState(false);
 
   useEffect(() => { loadAll(); }, [timeRange]);
+  useEffect(() => { loadSysHealth(); }, []);
+
+  const loadSysHealth = async () => {
+    setSysLoading(true);
+    try {
+      const serversResp = await serversApi.list();
+      const servers = serversResp.data;
+      const results = await Promise.all(
+        servers.map(s => serversApi.systemStatus(s.id).catch(err => ({
+          data: { server_id: s.id, server_name: s.name, hostname: s.hostname,
+                  error: err.message, root_disk: null, backup_disk: null, ipa_services: [] }
+        })))
+      );
+      setSysHealth(results.map(r => r.data));
+    } catch (e) {
+      console.error('sysHealth load error:', e);
+    } finally {
+      setSysLoading(false);
+    }
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -247,6 +279,89 @@ export default function Dashboard() {
           </ResponsiveContainer>
         ) : (
           <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No server data yet</div>
+        )}
+      </ChartCard>
+
+      {/* Server System Health — Disk + IPA Services */}
+      <ChartCard
+        title="Server System Health"
+        controls={
+          <button onClick={loadSysHealth} disabled={sysLoading}
+            style={{ fontSize: 12, padding: '3px 10px', background: '#E3F2FD', color: '#1565C0',
+              border: 'none', borderRadius: 6, cursor: sysLoading ? 'not-allowed' : 'pointer' }}>
+            {sysLoading ? '⟳ Checking...' : '↻ Refresh'}
+          </button>
+        }
+      >
+        {sysLoading && sysHealth.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>Connecting to servers...</div>
+        ) : sysHealth.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No servers configured</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {sysHealth.map(srv => (
+              <div key={srv.server_id} style={{ border: '1px solid #eee', borderRadius: 8, padding: '14px 16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div>
+                    <span style={{ fontWeight: 700, color: '#1F4E79', fontSize: 14 }}>{srv.server_name}</span>
+                    <span style={{ color: '#888', fontSize: 12, marginLeft: 8, fontFamily: 'monospace' }}>{srv.hostname}</span>
+                  </div>
+                  {srv.error && (
+                    <span style={{ color: '#f44336', fontSize: 12, background: '#FFEBEE', padding: '2px 8px', borderRadius: 4 }}>
+                      SSH error — {srv.error}
+                    </span>
+                  )}
+                </div>
+                {!srv.error && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+                    {/* Root disk */}
+                    <div>
+                      <div style={{ fontSize: 12, color: '#555', fontWeight: 600, marginBottom: 6 }}>💿 Root Filesystem ( / )</div>
+                      {srv.root_disk ? (
+                        <>
+                          <DiskBar pct={srv.root_disk.use_pct} />
+                          <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                            {srv.root_disk.used} used of {srv.root_disk.size} ({srv.root_disk.use_pct})
+                            {srv.root_disk.type && <span style={{ marginLeft: 6, color: '#bbb' }}>{srv.root_disk.type}</span>}
+                          </div>
+                        </>
+                      ) : <span style={{ color: '#aaa', fontSize: 12 }}>N/A</span>}
+                    </div>
+                    {/* Backup disk */}
+                    <div>
+                      <div style={{ fontSize: 12, color: '#555', fontWeight: 600, marginBottom: 6 }}>🗂 Backup Dir ( /var/lib/ipa/backup )</div>
+                      {srv.backup_disk ? (
+                        <>
+                          <DiskBar pct={srv.backup_disk.use_pct} />
+                          <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                            {srv.backup_disk.used} used of {srv.backup_disk.size} ({srv.backup_disk.use_pct})
+                          </div>
+                        </>
+                      ) : <span style={{ color: '#aaa', fontSize: 12 }}>N/A</span>}
+                    </div>
+                    {/* IPA services */}
+                    <div>
+                      <div style={{ fontSize: 12, color: '#555', fontWeight: 600, marginBottom: 6 }}>⚙ IPA Services</div>
+                      {srv.ipa_services.length === 0 ? (
+                        <span style={{ color: '#aaa', fontSize: 12 }}>No data</span>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                          {srv.ipa_services.map((svc, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                              <span style={{ color: '#555' }}>{svc.service}</span>
+                              <span style={{ fontWeight: 600, color: svc.status === 'RUNNING' ? '#4CAF50' : '#f44336' }}>
+                                {svc.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </ChartCard>
 
