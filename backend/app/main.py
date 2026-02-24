@@ -4,15 +4,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from .config import settings
-from .config.database import engine, Base
 from .api.routes import servers, backups, jobs, stats, audit, auth, auth_providers
 from .api.routes import organizations, notifications, verifications, restores, dr_templates, reports
 from .api.routes import system_settings
-from .models import server, backup_config, backup_job, audit_log, user, auth_provider  # noqa
-from .models import organization, notification_setting, verification_log, restore_operation, dr_template  # noqa
-from .models import system_setting  # noqa
-
-Base.metadata.create_all(bind=engine)
 
 # Rate limiter — keyed on client IP
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
