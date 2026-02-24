@@ -526,7 +526,7 @@ export default function Settings({ user }) {
           <div style={{ background: "#1e293b", borderRadius: 10, padding: "1.25rem 1.5rem" }}>
             <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>Local Users</h3>
             <p style={{ margin: "0 0 12px", color: "#64748b", fontSize: 12 }}>Manage local user accounts from the Auth → Users API or use the admin panel</p>
-            <a href=`${import.meta.env.VITE_API_URL || "http://localhost:8000"}/docs#/auth` target="_blank" rel="noreferrer" style={{ color: "#60a5fa", fontSize: 13 }}>Open User Management API →</a>
+            <a href={`${import.meta.env.VITE_API_URL || "http://localhost:8000"}/docs#/auth`} target="_blank" rel="noreferrer" style={{ color: "#60a5fa", fontSize: 13 }}>Open User Management API →</a>
           </div>
         </>
       )}
