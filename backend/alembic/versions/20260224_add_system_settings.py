@@ -14,16 +14,18 @@ depends_on = None
 
 
 def upgrade():
-    op.create_table(
-        'system_settings',
-        sa.Column('id',         sa.Integer(),     nullable=False),
-        sa.Column('key',        sa.String(255),   nullable=False),
-        sa.Column('value',      sa.Text(),        nullable=True),
-        sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('key'),
-    )
-    op.create_index('ix_system_settings_key', 'system_settings', ['key'], unique=True)
+    bind = op.get_bind()
+    if not sa.inspect(bind).has_table('system_settings'):
+        op.create_table(
+            'system_settings',
+            sa.Column('id',         sa.Integer(),     nullable=False),
+            sa.Column('key',        sa.String(255),   nullable=False),
+            sa.Column('value',      sa.Text(),        nullable=True),
+            sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()')),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('key'),
+        )
+        op.create_index('ix_system_settings_key', 'system_settings', ['key'], unique=True)
 
 
 def downgrade():
