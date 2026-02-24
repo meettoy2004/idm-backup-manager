@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
+import { settingsApi } from "./api";
 
 const api = axios.create({ baseURL: `${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/v1` });
 api.interceptors.request.use(cfg => {
@@ -331,6 +332,102 @@ function ChangePassword({ user }) {
   );
 }
 
+function SmtpSettings() {
+  const MASK = "••••••••";
+  const [cfg,     setCfg]     = useState({ smtp_host:"", smtp_port:587, smtp_user:"", smtp_password:"", smtp_from:"", smtp_tls:true });
+  const [saving,  setSaving]  = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [msg,     setMsg]     = useState("");
+
+  useEffect(() => {
+    settingsApi.getSmtp()
+      .then(r => setCfg(r.data))
+      .catch(e => console.error("SMTP load error:", e));
+  }, []);
+
+  const setF = (k, v) => setCfg(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await settingsApi.saveSmtp(cfg);
+      setMsg("✓ SMTP settings saved");
+    } catch(e) {
+      setMsg("✗ " + (e.response?.data?.detail || "Save failed"));
+    } finally { setSaving(false); setTimeout(() => setMsg(""), 4000); }
+  };
+
+  const test = async () => {
+    setTesting(true); setMsg("");
+    try {
+      const r = await settingsApi.testSmtp();
+      setMsg(r.data.success ? "✓ " + r.data.message : "✗ " + r.data.message);
+    } catch(e) {
+      setMsg("✗ " + (e.response?.data?.detail || "Test failed"));
+    } finally { setTesting(false); setTimeout(() => setMsg(""), 6000); }
+  };
+
+  const inputStyle = { background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155",
+    borderRadius: 6, padding: "7px 10px", fontSize: 13, width: "100%", boxSizing: "border-box" };
+  const labelStyle = { color: "#64748b", fontSize: 12, marginBottom: 4, display: "block" };
+
+  return (
+    <div style={{ background: "#1e293b", borderRadius: 10, padding: "1.25rem 1.5rem", marginBottom: 20 }}>
+      <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>📧 SMTP / Email Settings</h3>
+      <p style={{ margin: "0 0 1.25rem", color: "#64748b", fontSize: 12 }}>
+        Configure the outgoing mail server for backup alerts and reports. Settings here override environment variables.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={labelStyle}>SMTP Host</label>
+          <input value={cfg.smtp_host} onChange={e => setF("smtp_host", e.target.value)}
+            placeholder="smtp.example.com" style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Port</label>
+          <input type="number" value={cfg.smtp_port} onChange={e => setF("smtp_port", Number(e.target.value))}
+            placeholder="587" style={inputStyle} />
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 20 }}>
+          <input type="checkbox" id="smtp_tls" checked={cfg.smtp_tls} onChange={e => setF("smtp_tls", e.target.checked)}
+            style={{ cursor: "pointer" }} />
+          <label htmlFor="smtp_tls" style={{ color: "#94a3b8", fontSize: 13, cursor: "pointer" }}>Use STARTTLS (recommended)</label>
+        </div>
+        <div>
+          <label style={labelStyle}>Username / Sender Email</label>
+          <input value={cfg.smtp_user} onChange={e => setF("smtp_user", e.target.value)}
+            placeholder="alerts@example.com" style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Password</label>
+          <input type="password" value={cfg.smtp_password}
+            onFocus={e => { if (e.target.value === MASK) setF("smtp_password", ""); }}
+            onChange={e => setF("smtp_password", e.target.value)}
+            placeholder="Leave blank to keep existing" style={inputStyle} />
+        </div>
+        <div style={{ gridColumn: "1 / -1" }}>
+          <label style={labelStyle}>From Address</label>
+          <input value={cfg.smtp_from} onChange={e => setF("smtp_from", e.target.value)}
+            placeholder="idm-backup@example.com" style={inputStyle} />
+        </div>
+      </div>
+      {msg && <div style={{ color: msg.startsWith("✓") ? "#4ade80" : "#f87171", fontSize: 13, marginBottom: 12 }}>{msg}</div>}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={save} disabled={saving}
+          style={{ background: "#3b82f6", color: "#fff", border: "none", borderRadius: 6,
+            padding: "7px 18px", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+          {saving ? "Saving..." : "Save"}
+        </button>
+        <button onClick={test} disabled={testing}
+          style={{ background: "#1e40af", color: "#93c5fd", border: "none", borderRadius: 6,
+            padding: "7px 14px", cursor: "pointer", fontSize: 13 }}>
+          {testing ? "Sending..." : "📨 Send Test Email"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings({ user }) {
   const [providers, setProviders] = useState([]);
   const [editing,   setEditing]   = useState(null);
@@ -376,6 +473,8 @@ export default function Settings({ user }) {
 
       {isAdmin && (
         <>
+          <SmtpSettings />
+
           <div style={{ background: "#1e293b", borderRadius: 10, padding: "1.25rem 1.5rem", marginBottom: 20 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div>

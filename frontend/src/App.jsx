@@ -112,7 +112,7 @@ export default function App() {
       {tab === "notifications" && <div style={{ padding: "1.5rem" }}><NotificationSettings /></div>}
       {tab === "dr-templates"  && <div style={{ padding: "1.5rem" }}><DRTemplates /></div>}
       {tab === "restores"      && <RestoresTab servers={servers} />}
-      {tab === "servers"       && <ServersTab  servers={servers} setServers={setServers} api={api} canWrite={can(user,"write")} onRestore={(id, name) => setRestoreTarget({ serverId: id, serverName: name })} />}
+      {tab === "servers"       && <ServersTab  servers={servers} setServers={setServers} setJobs={setJobs} api={api} canWrite={can(user,"write")} onRestore={(id, name) => setRestoreTarget({ serverId: id, serverName: name })} />}
       {tab === "backups"       && <BackupsTab  backups={backups} servers={servers} setBackups={setBackups} api={api} canWrite={can(user,"write")} />}
       {tab === "jobs"          && <JobsTab     jobs={jobs} servers={servers} setJobs={setJobs} api={api} canWrite={can(user,"write")} />}
 
@@ -223,13 +223,14 @@ function RestoresTab({ servers }) {
   );
 }
 
-// ─── Servers Tab (original, + Restore button) ────────────────────────────────
-function ServersTab({ servers, setServers, api, canWrite, onRestore }) {
+// ─── Servers Tab (+ Trigger Backup + Restore button) ─────────────────────────
+function ServersTab({ servers, setServers, setJobs, api, canWrite, onRestore }) {
   const [form, setForm] = useState({ name:"", hostname:"", port:22, username:"", description:"" });
-  const [editId, setEditId] = useState(null);
-  const [msg,  setMsg]  = useState("");
-  const [subStatus, setSubStatus] = useState({});
-  const [checking,  setChecking]  = useState({});
+  const [editId,     setEditId]     = useState(null);
+  const [msg,        setMsg]        = useState("");
+  const [subStatus,  setSubStatus]  = useState({});
+  const [checking,   setChecking]   = useState({});
+  const [triggering, setTriggering] = useState({});
 
   useEffect(() => {
     servers.forEach(s => {
@@ -242,6 +243,19 @@ function ServersTab({ servers, setServers, api, canWrite, onRestore }) {
       }
     });
   }, [servers]);
+
+  const triggerBackup = async (server) => {
+    setTriggering(prev => ({ ...prev, [server.id]: true }));
+    try {
+      const r = await api.post("/jobs/trigger", { server_id: server.id });
+      setJobs(prev => [r.data, ...prev]);
+      setMsg(`✓ Backup triggered on ${server.name}`);
+      setTimeout(() => setMsg(""), 4000);
+    } catch(e) {
+      setMsg("✗ " + (e.response?.data?.detail || "Trigger failed"));
+    }
+    setTriggering(prev => ({ ...prev, [server.id]: false }));
+  };
 
   const checkSubscription = async (serverId) => {
     setChecking(prev => ({ ...prev, [serverId]: true }));
@@ -358,6 +372,13 @@ function ServersTab({ servers, setServers, api, canWrite, onRestore }) {
                 {canWrite && (
                   <td style={{ padding:"10px 12px" }}>
                     <div style={{ display:"flex", gap:6 }}>
+                      <button onClick={() => triggerBackup(s)} disabled={!!triggering[s.id]}
+                        style={{ background: triggering[s.id] ? "#334155" : "#065f46",
+                          color: triggering[s.id] ? "#64748b" : "#6ee7b7",
+                          border:"none", borderRadius:4, padding:"3px 10px",
+                          cursor: triggering[s.id] ? "not-allowed" : "pointer", fontSize:12 }}>
+                        {triggering[s.id] ? "⟳ Running..." : "▶ Backup"}
+                      </button>
                       <button onClick={() => onRestore(s.id, s.name)} style={{ background:"#6d28d9",
                         color:"#ddd6fe", border:"none", borderRadius:4, padding:"3px 10px",
                         cursor:"pointer", fontSize:12 }}>🔄 Restore</button>
@@ -510,18 +531,17 @@ function BackupsTab({ backups, servers, setBackups, api, canWrite }) {
   );
 }
 
-// ─── Jobs Tab (original, with trigger buttons) ────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+// Ensure ISO timestamps are treated as UTC before converting to local time
+const fmtDate = (iso) => {
+  if (!iso) return "-";
+  const s = iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z";
+  return new Date(s).toLocaleString();
+};
+
+// ─── Jobs Tab ────────────────────────────────────────────────────────────────
 function JobsTab({ jobs, servers, setJobs, api, canWrite }) {
   const [msg, setMsg] = useState("");
-
-  const trigger = async (serverId) => {
-    try {
-      const r = await api.post("/jobs/trigger", { server_id: serverId });
-      setJobs(prev => [r.data, ...prev]);
-      setMsg("✓ Backup triggered");
-      setTimeout(() => setMsg(""), 3000);
-    } catch(e) { setMsg("✗ " + (e.response?.data?.detail || "Error")); }
-  };
 
   const deleteJob = async (id) => {
     if (!confirm("Delete this job record?")) return;
@@ -533,22 +553,13 @@ function JobsTab({ jobs, servers, setJobs, api, canWrite }) {
     } catch(e) { setMsg("✗ " + (e.response?.data?.detail || "Error")); }
   };
 
-  const statusColor = { success:"#4ade80", SUCCESS:"#4ade80", failed:"#f87171", FAILED:"#f87171", running:"#fbbf24", pending:"#94a3b8" };
+  const STATUS_COLOR = { SUCCESS:"#4ade80", FAILED:"#f87171", RUNNING:"#fbbf24", PENDING:"#94a3b8" };
 
   return (
     <div style={{ padding:"1.5rem" }}>
       <h2 style={{ margin:"0 0 1rem" }}>Backup Jobs</h2>
       {!canWrite && <ReadOnlyBanner />}
       {msg && <div style={{ color: msg.startsWith("✓") ? "#4ade80" : "#f87171", marginBottom:12 }}>{msg}</div>}
-      {canWrite && (
-        <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
-          {servers.map(s => (
-            <button key={s.id} onClick={() => trigger(s.id)} style={{ background:"#1e40af",
-              color:"#93c5fd", border:"none", borderRadius:6, padding:"7px 14px",
-              cursor:"pointer", fontSize:13 }}>▶ Trigger {s.name}</button>
-          ))}
-        </div>
-      )}
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>
         <thead><tr style={{ color:"#64748b", borderBottom:"1px solid #334155" }}>
           {["ID","Server","Status","Started","Completed","Error", canWrite ? "Actions" : null].filter(Boolean).map(h => (
@@ -563,14 +574,12 @@ function JobsTab({ jobs, servers, setJobs, api, canWrite }) {
                 <td style={{ padding:"10px 12px", color:"#64748b" }}>#{j.id}</td>
                 <td style={{ padding:"10px 12px" }}>{server?.name || j.server_id}</td>
                 <td style={{ padding:"10px 12px" }}>
-                  <span style={{ color: statusColor[j.status] || "#94a3b8", fontWeight:600 }}>{j.status}</span>
+                  <span style={{ color: STATUS_COLOR[j.status?.toUpperCase()] || "#94a3b8", fontWeight:600 }}>
+                    {j.status?.toUpperCase()}
+                  </span>
                 </td>
-                <td style={{ padding:"10px 12px", color:"#64748b" }}>
-                  {j.started_at ? new Date(j.started_at).toLocaleString() : "-"}
-                </td>
-                <td style={{ padding:"10px 12px", color:"#64748b" }}>
-                  {j.completed_at ? new Date(j.completed_at).toLocaleString() : "-"}
-                </td>
+                <td style={{ padding:"10px 12px", color:"#64748b" }}>{fmtDate(j.started_at)}</td>
+                <td style={{ padding:"10px 12px", color:"#64748b" }}>{fmtDate(j.completed_at)}</td>
                 <td style={{ padding:"10px 12px", color:"#f87171", maxWidth:200 }}>
                   <span title={j.error_message} style={{ overflow:"hidden", textOverflow:"ellipsis",
                     whiteSpace:"nowrap", display:"block" }}>{j.error_message || "-"}</span>

@@ -7,8 +7,10 @@ from .config import settings
 from .config.database import engine, Base
 from .api.routes import servers, backups, jobs, stats, audit, auth, auth_providers
 from .api.routes import organizations, notifications, verifications, restores, dr_templates, reports
+from .api.routes import system_settings
 from .models import server, backup_config, backup_job, audit_log, user, auth_provider  # noqa
 from .models import organization, notification_setting, verification_log, restore_operation, dr_template  # noqa
+from .models import system_setting  # noqa
 
 Base.metadata.create_all(bind=engine)
 
@@ -40,7 +42,8 @@ app.include_router(notifications.router,  prefix="/api/v1/notifications",  tags=
 app.include_router(verifications.router,  prefix="/api/v1/verifications",  tags=["verifications"])
 app.include_router(restores.router,       prefix="/api/v1/restores",       tags=["restores"])
 app.include_router(dr_templates.router,   prefix="/api/v1/dr-templates",   tags=["dr-templates"])
-app.include_router(reports.router,        prefix="/api/v1/reports",        tags=["reports"])
+app.include_router(reports.router,         prefix="/api/v1/reports",        tags=["reports"])
+app.include_router(system_settings.router, prefix="/api/v1/settings",       tags=["settings"])
 
 @app.get("/health")
 @app.get("/health/")
