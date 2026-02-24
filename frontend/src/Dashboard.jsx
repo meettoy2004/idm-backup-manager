@@ -7,6 +7,23 @@ import { statsApi, serversApi } from './api';
 
 const COLORS = { success: '#4CAF50', failed: '#f44336', pending: '#FF9800' };
 const PIE_COLORS = ['#4CAF50', '#f44336', '#FF9800', '#2196F3'];
+const SYS_PAGE_SIZE   = 10;   // servers per page in System Health (limits simultaneous SSH connections)
+const CHART_TOP_N     = 10;   // max servers shown in Success Rate chart
+const HEALTH_PAGE_SIZE = 15;  // rows per page in Server Health Status table
+
+function Pager({ page, total, pageSize, onChange }) {
+  const pages = Math.ceil(total / pageSize);
+  if (pages <= 1) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 12, color: '#888' }}>
+      <button onClick={() => onChange(page - 1)} disabled={page === 0}
+        style={{ padding: '3px 10px', borderRadius: 4, border: '1px solid #ddd', cursor: page === 0 ? 'not-allowed' : 'pointer', background: 'white' }}>‹ Prev</button>
+      <span>Page {page + 1} of {pages} ({total} total)</span>
+      <button onClick={() => onChange(page + 1)} disabled={page >= pages - 1}
+        style={{ padding: '3px 10px', borderRadius: 4, border: '1px solid #ddd', cursor: page >= pages - 1 ? 'not-allowed' : 'pointer', background: 'white' }}>Next ›</button>
+    </div>
+  );
+}
 
 function StatCard({ label, value, sub, color = '#1F4E79' }) {
   return (
@@ -82,24 +99,36 @@ export default function Dashboard() {
   const [durations,   setDurations]   = useState([]);
   const [loading,     setLoading]     = useState(true);
   const [timeRange,   setTimeRange]   = useState(30);
-  const [sysHealth,   setSysHealth]   = useState([]);   // [{server_id, server_name, hostname, root_disk, backup_disk, ipa_services, error}]
+  const [sysHealth,   setSysHealth]   = useState({});    // { server_id: result }
   const [sysLoading,  setSysLoading]  = useState(false);
+  const [sysPage,     setSysPage]     = useState(0);
+  const [allServers,  setAllServers]  = useState([]);
+  const [healthPage,  setHealthPage]  = useState(0);
 
   useEffect(() => { loadAll(); }, [timeRange]);
-  useEffect(() => { loadSysHealth(); }, []);
+  useEffect(() => {
+    serversApi.list().then(r => setAllServers(r.data)).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (allServers.length > 0) loadSysPage(sysPage);
+  }, [sysPage, allServers]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadSysHealth = async () => {
+  const loadSysPage = async (page) => {
+    const pageServers = allServers.slice(page * SYS_PAGE_SIZE, (page + 1) * SYS_PAGE_SIZE);
+    if (!pageServers.length) return;
     setSysLoading(true);
     try {
-      const serversResp = await serversApi.list();
-      const servers = serversResp.data;
       const results = await Promise.all(
-        servers.map(s => serversApi.systemStatus(s.id).catch(err => ({
+        pageServers.map(s => serversApi.systemStatus(s.id).catch(err => ({
           data: { server_id: s.id, server_name: s.name, hostname: s.hostname,
                   error: err.message, root_disk: null, backup_disk: null, ipa_services: [] }
         })))
       );
-      setSysHealth(results.map(r => r.data));
+      setSysHealth(prev => {
+        const next = { ...prev };
+        results.forEach(r => { next[r.data.server_id] = r.data; });
+        return next;
+      });
     } catch (e) {
       console.error('sysHealth load error:', e);
     } finally {
@@ -186,7 +215,7 @@ export default function Dashboard() {
 
       {/* Server Health & Pie Chart */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: 24, marginBottom: 0 }}>
-        <ChartCard title="Server Health Status">
+        <ChartCard title={`Server Health Status${server_health.length > HEALTH_PAGE_SIZE ? ` (${server_health.length} servers)` : ''}`}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: '#F5F5F5' }}>
@@ -196,7 +225,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {server_health.map((s, i) => (
+              {server_health.slice(healthPage * HEALTH_PAGE_SIZE, (healthPage + 1) * HEALTH_PAGE_SIZE).map((s, i) => (
                 <tr key={s.server_id} style={{ background: i % 2 === 0 ? 'white' : '#FAFAFA' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 600, color: '#1F4E79' }}>{s.server_name}</td>
                   <td style={{ padding: '10px 12px', color: '#666', fontFamily: 'monospace', fontSize: 12 }}>{s.hostname}</td>
@@ -212,6 +241,7 @@ export default function Dashboard() {
               )}
             </tbody>
           </table>
+          <Pager page={healthPage} total={server_health.length} pageSize={HEALTH_PAGE_SIZE} onChange={setHealthPage} />
         </ChartCard>
 
         <ChartCard title="Job Outcomes (30 days)">
@@ -262,44 +292,62 @@ export default function Dashboard() {
         )}
       </ChartCard>
 
-      {/* Success Rate by Server */}
-      <ChartCard title="Success Rate by Server" controls={<div>{rangeBtn(7, '7d')}{rangeBtn(30, '30d')}</div>}>
-        {byServer.length > 0 ? (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={byServer} margin={{ top: 5, right: 20, left: 0, bottom: 5 }} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-              <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11, fill: '#888' }} tickFormatter={v => `${v}%`} />
-              <YAxis dataKey="server_name" type="category" tick={{ fontSize: 12, fill: '#555' }} width={120} />
-              <Tooltip formatter={(val) => [`${val}%`, 'Success Rate']} />
-              <Bar dataKey="success_rate" name="Success Rate" radius={[0,4,4,0]}
-                fill="#2E75B6"
-                label={{ position: 'right', fontSize: 12, fill: '#555', formatter: v => `${v}%` }}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No server data yet</div>
-        )}
-      </ChartCard>
+      {/* Success Rate by Server — capped to top N by job count */}
+      {(() => {
+        const sorted = [...byServer].sort((a, b) => (b.job_count || 0) - (a.job_count || 0));
+        const visible = sorted.slice(0, CHART_TOP_N);
+        const chartH  = Math.max(120, visible.length * 32);
+        return (
+          <ChartCard
+            title={`Success Rate by Server${byServer.length > CHART_TOP_N ? ` (top ${CHART_TOP_N} of ${byServer.length})` : ''}`}
+            controls={<div>{rangeBtn(7, '7d')}{rangeBtn(30, '30d')}</div>}
+          >
+            {visible.length > 0 ? (
+              <ResponsiveContainer width="100%" height={chartH}>
+                <BarChart data={visible} margin={{ top: 5, right: 20, left: 0, bottom: 5 }} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11, fill: '#888' }} tickFormatter={v => `${v}%`} />
+                  <YAxis dataKey="server_name" type="category" tick={{ fontSize: 12, fill: '#555' }} width={140} />
+                  <Tooltip formatter={(val) => [`${val}%`, 'Success Rate']} />
+                  <Bar dataKey="success_rate" name="Success Rate" radius={[0,4,4,0]}
+                    fill="#2E75B6"
+                    label={{ position: 'right', fontSize: 12, fill: '#555', formatter: v => `${v}%` }}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No server data yet</div>
+            )}
+          </ChartCard>
+        );
+      })()}
 
-      {/* Server System Health — Disk + IPA Services */}
-      <ChartCard
-        title="Server System Health"
-        controls={
-          <button onClick={loadSysHealth} disabled={sysLoading}
-            style={{ fontSize: 12, padding: '3px 10px', background: '#E3F2FD', color: '#1565C0',
-              border: 'none', borderRadius: 6, cursor: sysLoading ? 'not-allowed' : 'pointer' }}>
-            {sysLoading ? '⟳ Checking...' : '↻ Refresh'}
-          </button>
-        }
-      >
-        {sysLoading && sysHealth.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>Connecting to servers...</div>
-        ) : sysHealth.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No servers configured</div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {sysHealth.map(srv => (
+      {/* Server System Health — Disk + IPA Services (paginated, SYS_PAGE_SIZE SSH connections per page) */}
+      {(() => {
+        const totalSysPages = Math.ceil(allServers.length / SYS_PAGE_SIZE);
+        const pageServers   = allServers.slice(sysPage * SYS_PAGE_SIZE, (sysPage + 1) * SYS_PAGE_SIZE);
+        const pageData      = pageServers.map(s => sysHealth[s.id] || {
+          server_id: s.id, server_name: s.name, hostname: s.hostname, loading: true,
+          root_disk: null, backup_disk: null, ipa_services: [], error: null,
+        });
+        return (
+        <ChartCard
+          title={`Server System Health${allServers.length > 0 ? ` — page ${sysPage + 1}/${totalSysPages} (${allServers.length} servers)` : ''}`}
+          controls={
+            <button onClick={() => loadSysPage(sysPage)} disabled={sysLoading}
+              style={{ fontSize: 12, padding: '3px 10px', background: '#E3F2FD', color: '#1565C0',
+                border: 'none', borderRadius: 6, cursor: sysLoading ? 'not-allowed' : 'pointer' }}>
+              {sysLoading ? '⟳ Checking...' : '↻ Refresh page'}
+            </button>
+          }
+        >
+          {allServers.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 40, color: '#aaa' }}>No servers configured</div>
+          ) : (
+            <>
+              {sysLoading && <div style={{ fontSize: 12, color: '#1565C0', marginBottom: 12 }}>⟳ Connecting to {pageServers.length} server{pageServers.length > 1 ? 's' : ''}…</div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                {pageData.map(srv => (
               <div key={srv.server_id} style={{ border: '1px solid #eee', borderRadius: 8, padding: '14px 16px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <div>
@@ -360,10 +408,15 @@ export default function Dashboard() {
                   </div>
                 )}
               </div>
-            ))}
-          </div>
-        )}
-      </ChartCard>
+                ))}
+              </div>
+              <Pager page={sysPage} total={allServers.length} pageSize={SYS_PAGE_SIZE}
+                onChange={p => { setSysPage(p); }} />
+            </>
+          )}
+        </ChartCard>
+        );
+      })()}
 
       {/* Duration Stats + Recent Failures side by side */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
