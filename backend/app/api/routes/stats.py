@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from ...config.database import get_db
 from ...models.server import Server
 from ...models.backup_config import BackupConfig
@@ -11,7 +11,7 @@ router = APIRouter()
 @router.get("/overview")
 @router.get("/overview/")
 def get_overview(db: Session = Depends(get_db)):
-    since = datetime.utcnow() - timedelta(days=30)
+    since = datetime.now(timezone.utc) - timedelta(days=30)
 
     total_servers   = db.execute(text("SELECT COUNT(*) FROM servers")).scalar()
     active_servers  = db.execute(text("SELECT COUNT(*) FROM servers WHERE is_active = true")).scalar()
@@ -55,7 +55,7 @@ def get_overview(db: Session = Depends(get_db)):
 @router.get("/jobs-over-time")
 @router.get("/jobs-over-time/")
 def get_jobs_over_time(days: int = 30, db: Session = Depends(get_db)):
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     rows  = db.execute(text("""
         SELECT DATE(created_at) as day,
                COUNT(*) as total,
@@ -68,14 +68,14 @@ def get_jobs_over_time(days: int = 30, db: Session = Depends(get_db)):
     daily = {str(r[0]): {"date": str(r[0]), "total": int(r[1]), "success": int(r[2]), "failed": int(r[3])} for r in rows}
     result = []
     for i in range(days):
-        day = (datetime.utcnow() - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+        day = (datetime.now(timezone.utc) - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
         result.append(daily.get(day, {"date": day, "success": 0, "failed": 0, "total": 0}))
     return result
 
 @router.get("/success-rate-by-server")
 @router.get("/success-rate-by-server/")
 def get_success_rate_by_server(days: int = 30, db: Session = Depends(get_db)):
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     rows  = db.execute(text("""
         SELECT s.name, s.hostname,
                COUNT(j.id) as total,
@@ -120,7 +120,7 @@ def get_recent_failures(limit: int = 10, db: Session = Depends(get_db)):
 @router.get("/job-duration-stats")
 @router.get("/job-duration-stats/")
 def get_job_duration_stats(days: int = 30, db: Session = Depends(get_db)):
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     rows  = db.execute(text("""
         SELECT s.name,
                AVG(EXTRACT(EPOCH FROM (j.completed_at - j.started_at))) as avg_dur,

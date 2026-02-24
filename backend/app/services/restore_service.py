@@ -57,15 +57,18 @@ class RestoreService:
             self.ssh.execute_command(client, f'mkdir -p "{restore_path}"', sudo=True)
 
             # Step 1: GPG decrypt to fixed temp file
+            # Pass passphrase via stdin (--passphrase-fd 0) to avoid exposure in the process list
             decrypt_cmd = (
                 f'gpg --batch --yes '
-                f'--passphrase "{gpg_passphrase}" '
+                f'--passphrase-fd 0 '
                 f'--no-symkey-cache '
                 f'--pinentry-mode loopback '
                 f'--output "{tmp_file}" '
                 f'--decrypt "{backup_file}"'
             )
-            code, out, err = self.ssh.execute_command(client, decrypt_cmd, sudo=True)
+            code, out, err = self.ssh.execute_command(
+                client, decrypt_cmd, sudo=True, input_data=gpg_passphrase + "\n"
+            )
             decrypt_output = (out + err).strip()
             logger.info(f"GPG decrypt exit={code} output={decrypt_output[:200]}")
 

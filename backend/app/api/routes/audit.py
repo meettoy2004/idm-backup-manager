@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from ...config.database import get_db
 from ...models.audit_log import AuditLog
 from pydantic import BaseModel
@@ -44,7 +44,7 @@ def list_audit_logs(
     if resource: query = query.filter(AuditLog.resource == resource)
     if status:   query = query.filter(AuditLog.status == status)
     if days:
-        since = datetime.utcnow() - timedelta(days=days)
+        since = datetime.now(timezone.utc) - timedelta(days=days)
         query = query.filter(AuditLog.timestamp >= since)
 
     total  = query.count()
@@ -62,7 +62,7 @@ def list_audit_logs(
 @router.get("/summary")
 @router.get("/summary/")
 def get_audit_summary(days: int = 7, db: Session = Depends(get_db)):
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     rows  = db.execute(text("""
         SELECT action, COUNT(*) as count
         FROM audit_logs WHERE timestamp >= :s
@@ -86,7 +86,7 @@ def export_audit_logs(
     days: int = 30,
     db: Session = Depends(get_db)
 ):
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
     logs  = db.query(AuditLog).filter(
         AuditLog.timestamp >= since
     ).order_by(AuditLog.timestamp.desc()).all()
@@ -101,5 +101,5 @@ def export_audit_logs(
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode()),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=audit_log_{datetime.utcnow().strftime('%Y%m%d')}.csv"}
+        headers={"Content-Disposition": f"attachment; filename=audit_log_{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"}
     )

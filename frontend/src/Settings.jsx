@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 
-const api = axios.create({ baseURL: "http://localhost:8000/api/v1" });
+const api = axios.create({ baseURL: `${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/v1` });
 api.interceptors.request.use(cfg => {
   const token = localStorage.getItem("token");
   if (token) cfg.headers.Authorization = `Bearer ${token}`;
@@ -140,7 +140,7 @@ function ProviderForm({ provider, onSave, onCancel }) {
       {type === "saml" && provider?.id && (
         <div style={{ background: "#0f172a", borderRadius: 6, padding: "10px 14px", marginBottom: 12, fontSize: 12, color: "#64748b" }}>
           <strong style={{ color: "#94a3b8" }}>SP Metadata URL:</strong>{" "}
-          <a href={`http://localhost:8000/api/v1/providers/${provider.id}/saml/metadata`}
+          <a href={`${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/v1/providers/${provider.id}/saml/metadata`}
             target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>Download SP Metadata</a>
           {" "}— import this into Keycloak as a SAML client.
         </div>
@@ -427,7 +427,7 @@ export default function Settings({ user }) {
           <div style={{ background: "#1e293b", borderRadius: 10, padding: "1.25rem 1.5rem" }}>
             <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>Local Users</h3>
             <p style={{ margin: "0 0 12px", color: "#64748b", fontSize: 12 }}>Manage local user accounts from the Auth → Users API or use the admin panel</p>
-            <a href="http://localhost:8000/docs#/auth" target="_blank" rel="noreferrer" style={{ color: "#60a5fa", fontSize: 13 }}>Open User Management API →</a>
+            <a href=`${import.meta.env.VITE_API_URL || "http://localhost:8000"}/docs#/auth` target="_blank" rel="noreferrer" style={{ color: "#60a5fa", fontSize: 13 }}>Open User Management API →</a>
           </div>
         </>
       )}

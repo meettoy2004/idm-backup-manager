@@ -189,10 +189,12 @@ class DeploymentService:
             self._execute_command(ssh_client, f"chcon -t {selinux_context} {remote_path}")
     
     def _create_encrypted_credential(self, ssh_client, encryption_key: str):
+        # Write key via stdin to avoid shell interpolation / command injection
         self.ssh_service.execute_command(
             ssh_client,
-            f"bash -c 'printf \"%s\" \"{encryption_key}\" > /tmp/backup_pw.txt'",
-            sudo=True
+            "tee /tmp/backup_pw.txt > /dev/null",
+            sudo=True,
+            input_data=encryption_key,
         )
         exit_code, encrypted_output, error = self.ssh_service.execute_command(
             ssh_client,
