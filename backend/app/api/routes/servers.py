@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -6,17 +7,18 @@ from ...models.server import Server
 from ...models.backup_config import BackupConfig
 from ...models.backup_job import BackupJob
 from ...services.audit_service import log_action, AuditAction
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 class ServerCreate(BaseModel):
-    name: str
-    hostname: str
-    port: int = 22
-    username: str
-    description: str = None
+    name: str = Field(..., min_length=1, max_length=255)
+    hostname: str = Field(..., min_length=1, max_length=255)
+    port: int = Field(22, ge=1, le=65535)
+    username: str = Field(..., min_length=1, max_length=100)
+    description: str = Field(None, max_length=1000)
 
 class ServerResponse(BaseModel):
     id: int
@@ -159,8 +161,7 @@ def check_subscription_manager(server_id: int, db: Session = Depends(get_db)):
         
         return result
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error checking subscription for server %s", server_id)
         result = {"configured": False, "enabled": False, "status": "error", 
                 "message": str(e)}
         # Save error to database

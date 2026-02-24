@@ -23,11 +23,13 @@ class VerificationResponse(BaseModel):
 
 @router.get("", response_model=List[VerificationResponse])
 @router.get("/", response_model=List[VerificationResponse])
-def list_verifications(job_id: Optional[int] = None, db: Session = Depends(get_db)):
+def list_verifications(job_id: Optional[int] = None, limit: int = 100, offset: int = 0,
+                       db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 500))
     query = db.query(VerificationLog).order_by(VerificationLog.verified_at.desc())
     if job_id:
         query = query.filter(VerificationLog.job_id == job_id)
-    return query.limit(100).all()
+    return query.offset(offset).limit(limit).all()
 
 @router.get("/{verification_id}", response_model=VerificationResponse)
 @router.get("/{verification_id}/", response_model=VerificationResponse)

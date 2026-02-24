@@ -7,7 +7,7 @@ from ...models.server import Server
 from ...services.ssh_service import SSHService
 from ...services.audit_service import log_action, AuditAction
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -29,11 +29,13 @@ class TriggerRequest(BaseModel):
 
 @router.get("", response_model=List[JobResponse])
 @router.get("/", response_model=List[JobResponse])
-def list_jobs(server_id: Optional[int] = None, status: Optional[str] = None, db: Session = Depends(get_db)):
+def list_jobs(server_id: Optional[int] = None, status: Optional[str] = None,
+               limit: int = 50, offset: int = 0, db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 500))  # cap between 1 and 500
     query = db.query(BackupJob).order_by(BackupJob.created_at.desc())
     if server_id: query = query.filter(BackupJob.server_id == server_id)
     if status:    query = query.filter(BackupJob.status == status.lower())
-    return query.limit(50).all()
+    return query.offset(offset).limit(limit).all()
 
 @router.get("/server/{server_id}/latest", response_model=JobResponse)
 def get_latest_job(server_id: int, db: Session = Depends(get_db)):
@@ -57,7 +59,7 @@ def trigger_backup(request: Request, body: TriggerRequest, db: Session = Depends
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
 
-    job = BackupJob(server_id=server.id, status="running", started_at=datetime.utcnow())
+    job = BackupJob(server_id=server.id, status="running", started_at=datetime.now(timezone.utc))
     db.add(job)
     db.commit()
     db.refresh(job)
@@ -88,7 +90,7 @@ def trigger_backup(request: Request, body: TriggerRequest, db: Session = Depends
         log_action(db, AuditAction.JOB_FAILED, resource="jobs", resource_id=job.id,
             detail=f"Backup failed on '{server.name}': {e}", status="failure")
 
-    job.completed_at = datetime.utcnow()
+    job.completed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(job)
     return job

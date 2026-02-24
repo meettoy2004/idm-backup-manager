@@ -6,16 +6,16 @@ from ...models.backup_config import BackupConfig
 from ...models.server import Server
 from ...services.deployment_service import DeploymentService
 from ...services.audit_service import log_action, AuditAction
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
 class BackupConfigCreate(BaseModel):
-    server_id: int
-    schedule: str
-    retention_count: int = 10
-    s3_mount_dir: str = "/mnt/idm-backup"
-    backup_dir: str = "/var/lib/ipa/backup"
+    server_id: int = Field(..., gt=0)
+    schedule: str = Field(..., min_length=1, max_length=100)
+    retention_count: int = Field(10, ge=1, le=9999)
+    s3_mount_dir: str = Field("/mnt/idm-backup", min_length=1, max_length=500)
+    backup_dir: str = Field("/var/lib/ipa/backup", min_length=1, max_length=500)
 
 class BackupConfigUpdate(BaseModel):
     schedule: Optional[str] = None

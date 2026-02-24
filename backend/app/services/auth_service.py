@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from jose import JWTError, jwt, exceptions
 from passlib.context import CryptContext
@@ -13,7 +13,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM  = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours
+ACCESS_TOKEN_EXPIRE_MINUTES = 60   # 1 hour
 
 def verify_password(plain: str, hashed: str) -> bool:
     try:
@@ -26,7 +26,7 @@ def hash_password(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     encoded = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     logger.info(f"Token created for sub={data.get('sub')} expires={expire}")
@@ -79,7 +79,7 @@ def get_or_create_oidc_user(db: Session, claims: dict) -> User:
                 role="viewer", is_active=True
             )
             db.add(user)
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     db.commit()
     db.refresh(user)
     return user

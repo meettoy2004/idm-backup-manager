@@ -35,11 +35,13 @@ class RestoreResponse(BaseModel):
 
 @router.get("", response_model=List[RestoreResponse])
 @router.get("/", response_model=List[RestoreResponse])
-def list_restores(server_id: Optional[int] = None, db: Session = Depends(get_db)):
+def list_restores(server_id: Optional[int] = None, limit: int = 50, offset: int = 0,
+                  db: Session = Depends(get_db)):
+    limit = max(1, min(limit, 500))
     query = db.query(RestoreOperation).order_by(RestoreOperation.created_at.desc())
     if server_id:
         query = query.filter(RestoreOperation.server_id == server_id)
-    return query.limit(50).all()
+    return query.offset(offset).limit(limit).all()
 
 @router.get("/{restore_id}", response_model=RestoreResponse)
 @router.get("/{restore_id}/", response_model=RestoreResponse)

@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from ...config.database import get_db
 from ...config import settings
 from ...models.user import User
@@ -12,6 +12,10 @@ from ...services.auth_service import (
 )
 from ...services.audit_service import log_action
 from ...api.deps import get_current_user, require_admin
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 
@@ -56,6 +60,7 @@ class CompletePasswordChangeRequest(BaseModel):
 
 @router.post("/login")
 @router.post("/login/")
+@limiter.limit("10/minute")
 def login(form_data: OAuth2PasswordRequestForm = Depends(),
           request: Request = None, db: Session = Depends(get_db)):
     user = db.query(User).filter(
@@ -86,7 +91,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(),
 
     # Normal login flow
     access_token = create_access_token(data={"sub": str(user.id), "role": user.role})
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
     db.commit()
 
     log_action(db, "LOGIN_SUCCESS", user=user.email,
@@ -151,7 +156,7 @@ def complete_password_change(
         
         user.hashed_password = hash_password(body.new_password)
         user.requires_password_change = False
-        user.last_login = datetime.utcnow()
+        user.last_login = datetime.now(timezone.utc)
         db.commit()
         
         log_action(db, "PASSWORD_CHANGED", user=user.email,
