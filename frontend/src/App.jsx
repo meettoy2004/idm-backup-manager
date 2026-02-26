@@ -431,7 +431,10 @@ function BackupsTab({ backups, servers, setBackups, api, canWrite }) {
       if (editId) {
         const r = await api.put(`/backups/${editId}`, data);
         setBackups(prev => prev.map(b => b.id === editId ? r.data : b));
-        setMsg("✓ Config updated");
+        const ds = r.data.deploy_status;
+        if (ds === "deployed")       setMsg("✓ Config updated and deployed to server");
+        else if (ds === "skipped")   setMsg("✓ Config updated (server inactive or config disabled — skipped deploy)");
+        else                         setMsg(`✓ Config updated — deploy: ${ds}`);
       } else {
         const r = await api.post("/backups/", data);
         setBackups(prev => [...prev, r.data]);

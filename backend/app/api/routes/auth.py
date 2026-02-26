@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from ...config.database import get_db
 from ...config import settings
 from ...models.user import User
@@ -18,6 +18,20 @@ from slowapi.util import get_remote_address
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
+
+
+def _get_security(db: Session) -> dict:
+    """Read security policy settings from system_settings, falling back to safe defaults."""
+    from ...models.system_setting import SystemSetting
+    def g(key, default):
+        row = db.query(SystemSetting).filter(SystemSetting.key == key).first()
+        return int(row.value) if (row and row.value) else default
+    return {
+        "session_timeout_minutes":  g("security_session_timeout_minutes",  60),
+        "lockout_threshold":        g("security_lockout_threshold",          5),
+        "lockout_duration_minutes": g("security_lockout_duration_minutes",  15),
+        "lockout_reset_minutes":    g("security_lockout_reset_minutes",     10),
+    }
 
 class UserResponse(BaseModel):
     id: int
@@ -63,40 +77,93 @@ class CompletePasswordChangeRequest(BaseModel):
 @limiter.limit("10/minute")
 def login(form_data: OAuth2PasswordRequestForm = Depends(),
           request: Request = None, db: Session = Depends(get_db)):
+    ip = request.client.host if request else None
+    now = datetime.now(timezone.utc)
+    sec = _get_security(db)
+
     user = db.query(User).filter(
         (User.username == form_data.username) | (User.email == form_data.username),
         User.auth_method == "local",
         User.is_active == True
     ).first()
 
+    # ── Lockout check ─────────────────────────────────────────────────────────
+    if user and user.locked_until:
+        if user.locked_until > now:
+            remaining = int((user.locked_until - now).total_seconds() / 60) + 1
+            log_action(db, "LOGIN_FAILED", user=form_data.username,
+                detail=f"Login blocked — account locked for {remaining} more minute(s)",
+                ip_address=ip, status="failure")
+            raise HTTPException(status_code=423,
+                detail=f"Account locked. Try again in {remaining} minute(s).")
+        else:
+            # Lockout window expired — automatically unlock
+            user.failed_logins  = 0
+            user.locked_until   = None
+            user.last_failed_at = None
+            db.commit()
+
+    # ── Credential check ──────────────────────────────────────────────────────
     if not user or not verify_password(form_data.password, user.hashed_password):
+        if user:
+            # Reset failure counter if enough idle time has passed
+            if (user.last_failed_at and
+                    (now - user.last_failed_at).total_seconds() > sec["lockout_reset_minutes"] * 60):
+                user.failed_logins = 0
+
+            user.failed_logins  = (user.failed_logins or 0) + 1
+            user.last_failed_at = now
+
+            if user.failed_logins >= sec["lockout_threshold"]:
+                user.locked_until   = now + timedelta(minutes=sec["lockout_duration_minutes"])
+                user.failed_logins  = 0
+                user.last_failed_at = None
+                db.commit()
+                log_action(db, "ACCOUNT_LOCKED", user=form_data.username,
+                    detail=f"Account locked after {sec['lockout_threshold']} failed attempts",
+                    ip_address=ip, status="failure")
+                raise HTTPException(status_code=423,
+                    detail=f"Too many failed attempts. Account locked for {sec['lockout_duration_minutes']} minute(s).")
+            db.commit()
+
         log_action(db, "LOGIN_FAILED", user=form_data.username,
             detail=f"Failed login for '{form_data.username}'",
-            ip_address=request.client.host if request else None, status="failure")
+            ip_address=ip, status="failure")
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # ── Successful login ──────────────────────────────────────────────────────
+    # Reset any leftover lockout state
+    user.failed_logins  = 0
+    user.locked_until   = None
+    user.last_failed_at = None
 
     # Check if password change is required
     if user.requires_password_change:
         temp_token = create_access_token(
             data={"sub": str(user.id), "role": user.role, "requires_password_change": True}
         )
+        db.commit()
         log_action(db, "LOGIN_REQUIRES_PASSWORD_CHANGE", user=user.email,
             detail=f"Login for '{user.username}' requires password change",
-            ip_address=request.client.host if request else None)
+            ip_address=ip)
         return {
             "requires_password_change": True,
             "temp_token": temp_token,
             "message": "Password change required before login"
         }
 
-    # Normal login flow
-    access_token = create_access_token(data={"sub": str(user.id), "role": user.role})
-    user.last_login = datetime.now(timezone.utc)
+    # Issue token using the configured session timeout
+    expires = timedelta(minutes=sec["session_timeout_minutes"])
+    access_token = create_access_token(
+        data={"sub": str(user.id), "role": user.role},
+        expires_delta=expires,
+    )
+    user.last_login = now
     db.commit()
 
     log_action(db, "LOGIN_SUCCESS", user=user.email,
         detail=f"Successful login for '{user.username}'",
-        ip_address=request.client.host if request else None)
+        ip_address=ip)
 
     return {
         "access_token": access_token,

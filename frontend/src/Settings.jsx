@@ -173,32 +173,46 @@ function ProviderForm({ provider, onSave, onCancel }) {
 function SecurityPolicies() {
   const numInputStyle = { background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155",
     borderRadius: 6, padding: "7px 10px", fontSize: 13, width: 90, textAlign: "center", boxSizing: "border-box" };
-  const [sessionTimeout, setSessionTimeout]       = useState(30);
+  const [sessionTimeout, setSessionTimeout]       = useState(60);
   const [sessionSaved, setSessionSaved]           = useState(false);
   const [unlockTime, setUnlockTime]               = useState(15);
   const [maxFailedLogins, setMaxFailedLogins]     = useState(5);
   const [resetCounterAfter, setResetCounterAfter] = useState(10);
   const [lockoutSaved, setLockoutSaved]           = useState(false);
+  const [loadErr, setLoadErr]                     = useState("");
 
   useEffect(() => {
-    try {
-      const p = JSON.parse(localStorage.getItem("securityPolicies") || "{}");
-      if (p.sessionTimeout)    setSessionTimeout(p.sessionTimeout);
-      if (p.unlockTime)        setUnlockTime(p.unlockTime);
-      if (p.maxFailedLogins)   setMaxFailedLogins(p.maxFailedLogins);
-      if (p.resetCounterAfter) setResetCounterAfter(p.resetCounterAfter);
-    } catch(_) {}
+    settingsApi.getSecurity()
+      .then(r => {
+        setSessionTimeout(r.data.session_timeout_minutes);
+        setUnlockTime(r.data.lockout_duration_minutes);
+        setMaxFailedLogins(r.data.lockout_threshold);
+        setResetCounterAfter(r.data.lockout_reset_minutes);
+      })
+      .catch(() => setLoadErr("Could not load security settings from server."));
   }, []);
 
-  const saveSession = () => {
-    const e = JSON.parse(localStorage.getItem("securityPolicies") || "{}");
-    localStorage.setItem("securityPolicies", JSON.stringify({ ...e, sessionTimeout }));
-    setSessionSaved(true); setTimeout(() => setSessionSaved(false), 2500);
+  const saveSession = async () => {
+    try {
+      await settingsApi.saveSecurity({
+        session_timeout_minutes:  sessionTimeout,
+        lockout_threshold:        maxFailedLogins,
+        lockout_duration_minutes: unlockTime,
+        lockout_reset_minutes:    resetCounterAfter,
+      });
+      setSessionSaved(true); setTimeout(() => setSessionSaved(false), 2500);
+    } catch(e) { setLoadErr("✗ " + (e.response?.data?.detail || "Save failed")); }
   };
-  const saveLockout = () => {
-    const e = JSON.parse(localStorage.getItem("securityPolicies") || "{}");
-    localStorage.setItem("securityPolicies", JSON.stringify({ ...e, unlockTime, maxFailedLogins, resetCounterAfter }));
-    setLockoutSaved(true); setTimeout(() => setLockoutSaved(false), 2500);
+  const saveLockout = async () => {
+    try {
+      await settingsApi.saveSecurity({
+        session_timeout_minutes:  sessionTimeout,
+        lockout_threshold:        maxFailedLogins,
+        lockout_duration_minutes: unlockTime,
+        lockout_reset_minutes:    resetCounterAfter,
+      });
+      setLockoutSaved(true); setTimeout(() => setLockoutSaved(false), 2500);
+    } catch(e) { setLoadErr("✗ " + (e.response?.data?.detail || "Save failed")); }
   };
 
   const sectionStyle = { background: "#1e293b", borderRadius: 10, padding: "1.25rem 1.5rem", marginBottom: 20 };
@@ -221,11 +235,11 @@ function SecurityPolicies() {
             <span style={unitStyle}>minutes</span>
           </div>
         </div>
+        {loadErr && <div style={{ color: "#f87171", fontSize: 13, marginBottom: 8 }}>{loadErr}</div>}
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={saveSession} style={btnStyle}>Save</button>
-          {sessionSaved && <span style={{ color: "#4ade80", fontSize: 13 }}>✓ Saved</span>}
+          {sessionSaved && <span style={{ color: "#4ade80", fontSize: 13 }}>✓ Saved — takes effect on next login</span>}
         </div>
-        <p style={{ margin: "12px 0 0", color: "#475569", fontSize: 11 }}>ℹ Takes effect at the next login.</p>
       </div>
       <div style={sectionStyle}>
         <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>🔒 Account Lockout</h3>

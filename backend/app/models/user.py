@@ -18,6 +18,10 @@ class User(Base):
     requires_password_change = Column(Boolean, default=False)
     last_login               = Column(DateTime(timezone=True), nullable=True)
     created_at               = Column(DateTime(timezone=True), server_default=func.now())
+    # Account lockout
+    failed_logins            = Column(Integer, default=0, nullable=False, server_default='0')
+    locked_until             = Column(DateTime(timezone=True), nullable=True)
+    last_failed_at           = Column(DateTime(timezone=True), nullable=True)
 
     # Phase 1: New relationships
     organizations         = relationship("UserOrganization", back_populates="user", cascade="all, delete-orphan")
