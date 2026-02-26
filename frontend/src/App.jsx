@@ -87,7 +87,7 @@ export default function App() {
       }}>
         {/* Logo */}
         <div style={{ padding: "18px 16px 14px", borderBottom: "1px solid #334155" }}>
-          <span style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 15 }}>🔐 IdM Backup</span>
+          <span style={{ color: "#f1f5f9", fontWeight: 700, fontSize: 15 }}>🔐 IDM Toolkit</span>
         </div>
 
         {/* Nav items */}
