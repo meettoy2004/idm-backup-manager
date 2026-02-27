@@ -98,9 +98,13 @@ class DeploymentService:
             # Step 7: Reload systemd and enable services
             logger.info("Reloading systemd and enabling services...")
             self._execute_command(ssh_client, "systemctl daemon-reload")
-            self._execute_command(ssh_client, "systemctl enable --now ipa-backup.timer")
+            # Enable units so they start on boot
+            self._execute_command(ssh_client, "systemctl enable ipa-backup.timer")
             self._execute_command(ssh_client, "systemctl enable ipa-backup.service")
             self._execute_command(ssh_client, "systemctl enable ipa-backup-retention.service")
+            # Restart the timer so the new OnCalendar schedule takes effect immediately.
+            # 'enable --now' is a no-op if the timer is already running; 'restart' is required.
+            self._execute_command(ssh_client, "systemctl restart ipa-backup.timer")
             
             # Step 8: Verify deployment
             logger.info("Verifying deployment...")

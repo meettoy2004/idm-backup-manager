@@ -83,5 +83,34 @@ def test_smtp_config(db: Session = Depends(get_db)):
     if not to:
         raise HTTPException(status_code=400, detail="No recipient: set smtp_user to a valid address first")
 
-    ok = svc.send(to, "[IdM Backup] SMTP Test", "SMTP configuration is working correctly.")
+    ok = svc.send(to, "[IDM Toolkit] SMTP Test", "SMTP configuration is working correctly.")
     return {"success": ok, "message": "Test email sent" if ok else "Failed to send — check logs"}
+
+
+# ── Security policies ─────────────────────────────────────────────────────────
+
+class SecurityConfig(BaseModel):
+    session_timeout_minutes:  int = 60
+    lockout_threshold:        int = 5
+    lockout_duration_minutes: int = 15
+    lockout_reset_minutes:    int = 10
+
+
+@router.get("/security")
+def get_security_config(db: Session = Depends(get_db)):
+    return {
+        "session_timeout_minutes":  int(_get(db, "security_session_timeout_minutes",  "60")),
+        "lockout_threshold":        int(_get(db, "security_lockout_threshold",         "5")),
+        "lockout_duration_minutes": int(_get(db, "security_lockout_duration_minutes",  "15")),
+        "lockout_reset_minutes":    int(_get(db, "security_lockout_reset_minutes",     "10")),
+    }
+
+
+@router.put("/security")
+def update_security_config(config: SecurityConfig, db: Session = Depends(get_db)):
+    _set(db, "security_session_timeout_minutes",  str(config.session_timeout_minutes))
+    _set(db, "security_lockout_threshold",        str(config.lockout_threshold))
+    _set(db, "security_lockout_duration_minutes", str(config.lockout_duration_minutes))
+    _set(db, "security_lockout_reset_minutes",    str(config.lockout_reset_minutes))
+    db.commit()
+    return {"message": "Security settings saved"}

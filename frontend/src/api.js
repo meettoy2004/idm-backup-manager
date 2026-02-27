@@ -24,9 +24,11 @@ export const serversApi = {
 };
 
 export const settingsApi = {
-  getSmtp:  () => api.get('/settings/smtp'),
-  saveSmtp: (data) => api.put('/settings/smtp', data),
-  testSmtp: () => api.post('/settings/smtp/test'),
+  getSmtp:      () => api.get('/settings/smtp'),
+  saveSmtp:     (data) => api.put('/settings/smtp', data),
+  testSmtp:     () => api.post('/settings/smtp/test'),
+  getSecurity:  () => api.get('/settings/security'),
+  saveSecurity: (data) => api.put('/settings/security', data),
 };
 
 export const backupsApi = {
