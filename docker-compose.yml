@@ -94,6 +94,7 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ${SSH_KEY_PATH:-~/.ssh}:/home/appuser/.ssh:ro
+      - ssldata:/ssl
     depends_on:
       postgres: { condition: service_healthy }
       redis:    { condition: service_healthy }
@@ -117,6 +118,9 @@ services:
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-5174}:80"
+      - "${FRONTEND_HTTPS_PORT:-5175}:443"
+    volumes:
+      - ssldata:/etc/ssl/idm-toolkit
     depends_on:
       backend: { condition: service_healthy }
     healthcheck:
@@ -169,6 +173,7 @@ volumes:
   redisdata:
   vaultdata:
   vaultlogs:
+  ssldata:
 
 networks:
   idm-net:

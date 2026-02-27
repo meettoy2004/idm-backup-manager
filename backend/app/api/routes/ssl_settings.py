@@ -5,6 +5,12 @@ from pydantic import BaseModel
 from typing import Optional
 from ...config.database import get_db
 from ...models.system_setting import SystemSetting
+import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+_SSL_DIR = "/ssl"   # backend mount point for the shared ssldata volume
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -14,6 +20,38 @@ from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.x509 import load_pem_x509_certificate
 
 router = APIRouter()
+
+
+# ── Volume helpers ─────────────────────────────────────────────────────────────
+
+def _write_ssl_files(cert_pem: str, key_pem: str) -> None:
+    """Write cert + key to the shared ssldata volume and touch .reload.
+
+    The nginx entrypoint polls for .reload every 5 s and calls `nginx -s reload`
+    when it appears, switching to HTTPS mode automatically.  If the volume is
+    not mounted (local dev without Docker), this is a no-op.
+    """
+    ssl_dir = os.environ.get("SSL_DIR", _SSL_DIR)
+    if not os.path.isdir(ssl_dir):
+        logger.info("SSL volume not mounted at %s — skipping auto-apply", ssl_dir)
+        return
+    try:
+        cert_path  = os.path.join(ssl_dir, "server.crt")
+        key_path   = os.path.join(ssl_dir, "server.key")
+        flag_path  = os.path.join(ssl_dir, ".reload")
+        # Write key first so nginx never sees a cert without its matching key
+        with open(key_path, "w", encoding="utf-8") as f:
+            f.write(key_pem)
+        os.chmod(key_path, 0o644)
+        with open(cert_path, "w", encoding="utf-8") as f:
+            f.write(cert_pem)
+        os.chmod(cert_path, 0o644)
+        # Touch the reload trigger — nginx entrypoint picks this up
+        open(flag_path, "w").close()
+        logger.info("SSL files written to %s; nginx reload triggered", ssl_dir)
+    except OSError as exc:
+        # Cert is safely in DB regardless — log and continue
+        logger.error("Failed to write SSL files to volume: %s", exc)
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
@@ -190,9 +228,12 @@ def import_certificate(req: CertImport, db: Session = Depends(get_db)):
     _set(db, "ssl_certificate", full_pem)
     db.commit()
 
+    # Auto-apply: write to shared volume so nginx reloads within ~5 s
+    _write_ssl_files(cert_pem=full_pem, key_pem=key_pem)
+
     cn = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
     return {
-        "message":     "Certificate imported and validated successfully.",
+        "message":     "Certificate imported. nginx will switch to HTTPS within 5 seconds.",
         "common_name": cn[0].value if cn else "",
         "not_after":   cert.not_valid_after_utc.isoformat(),
     }

@@ -622,9 +622,9 @@ function SslSettings() {
           {busy ? "Importing…" : "Import Certificate"}
         </button>
         <p style={{ margin: "12px 0 0", color: "#475569", fontSize: 11, lineHeight: 1.6 }}>
-          After importing, download the certificate, private key, and SSL nginx.conf above. Mount the cert and key
-          into your nginx container at <code style={{ color: "#7dd3fc" }}>/etc/ssl/idm-toolkit/</code> and
-          replace <code style={{ color: "#7dd3fc" }}>nginx.conf</code>, then reload nginx.
+          After importing, nginx automatically switches to HTTPS within ~5 seconds — no manual steps needed.
+          HTTP on port 80 redirects to HTTPS on port 443. The download buttons above are useful as a backup
+          or for configuring an external reverse proxy.
         </p>
       </div>
     </div>
