@@ -442,6 +442,196 @@ function SmtpSettings() {
   );
 }
 
+// ─── SSL / TLS Certificate ────────────────────────────────────────────────────
+function SslSettings() {
+  const cardStyle  = { background: "#1e293b", borderRadius: 10, padding: "1.25rem 1.5rem", marginBottom: 20 };
+  const labelStyle = { display: "block", fontSize: 12, color: "#94a3b8", marginBottom: 4 };
+  const inputStyle = { width: "100%", background: "#0f172a", color: "#f1f5f9", border: "1px solid #334155",
+    borderRadius: 6, padding: "7px 10px", fontSize: 13, boxSizing: "border-box" };
+  const btnStyle   = { background: "#3b82f6", color: "#fff", border: "none", borderRadius: 6,
+    padding: "7px 16px", cursor: "pointer", fontSize: 13, fontWeight: 600 };
+  const secBtnStyle = { background: "#1e3a5f", color: "#93c5fd", border: "1px solid #3b82f6",
+    borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontSize: 12 };
+
+  const [status,  setStatus]  = useState(null);
+  const [msg,     setMsg]     = useState("");
+  const [csrForm, setCsrForm] = useState({
+    common_name: "", organization: "", organizational_unit: "",
+    country: "", state: "", city: "", email: "", key_size: 2048,
+  });
+  const [generatedCsr, setGeneratedCsr] = useState("");
+  const [certPem,      setCertPem]      = useState("");
+  const [caBundle,     setCaBundle]     = useState("");
+  const [busy,         setBusy]         = useState(false);
+
+  const loadStatus = () =>
+    api.get("/settings/ssl/status").then(r => setStatus(r.data)).catch(() => {});
+
+  useEffect(() => { loadStatus(); }, []);
+
+  const generateCsr = async () => {
+    if (!csrForm.common_name.trim()) { setMsg("✗ Common Name (hostname) is required"); return; }
+    setBusy(true); setMsg("");
+    try {
+      const r = await api.post("/settings/ssl/csr", { ...csrForm, key_size: Number(csrForm.key_size) });
+      setGeneratedCsr(r.data.csr);
+      setMsg("✓ " + r.data.message);
+      loadStatus();
+    } catch(e) { setMsg("✗ " + (e.response?.data?.detail || "Failed to generate CSR")); }
+    finally { setBusy(false); }
+  };
+
+  const importCert = async () => {
+    if (!certPem.trim()) { setMsg("✗ Paste the signed certificate PEM first"); return; }
+    setBusy(true); setMsg("");
+    try {
+      const r = await api.post("/settings/ssl/certificate", { certificate: certPem, ca_bundle: caBundle || null });
+      setMsg("✓ " + r.data.message);
+      setCertPem(""); setCaBundle("");
+      loadStatus();
+    } catch(e) { setMsg("✗ " + (e.response?.data?.detail || "Import failed")); }
+    finally { setBusy(false); }
+  };
+
+  const download = (path, filename) => {
+    const base = import.meta.env.VITE_API_URL || "http://localhost:8000";
+    const token = localStorage.getItem("token");
+    fetch(`${base}/api/v1${path}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.blob())
+      .then(blob => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+      });
+  };
+
+  const fmtDate = iso => iso ? new Date(iso).toLocaleDateString() : "—";
+  const expired  = status?.not_after && new Date(status.not_after) < new Date();
+
+  return (
+    <div style={cardStyle}>
+      <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>SSL / TLS Certificate</h3>
+      <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 12 }}>
+        Generate a CSR, submit it to your CA, then import the signed certificate to enable HTTPS via nginx.
+      </p>
+      {msg && <div style={{ color: msg.startsWith("✓") ? "#4ade80" : "#f87171", fontSize: 13, marginBottom: 12 }}>{msg}</div>}
+
+      {/* Current cert status */}
+      {status?.has_certificate && (
+        <div style={{ background: expired ? "#450a0a" : "#052e16", border: `1px solid ${expired ? "#991b1b" : "#166534"}`,
+          borderRadius: 8, padding: "10px 14px", marginBottom: 16, fontSize: 13 }}>
+          <div style={{ color: expired ? "#fca5a5" : "#4ade80", fontWeight: 700, marginBottom: 4 }}>
+            {expired ? "⚠ Certificate EXPIRED" : "✓ Certificate installed"}
+          </div>
+          <div style={{ color: "#94a3b8", lineHeight: 1.8 }}>
+            <span style={{ marginRight: 20 }}>CN: <b style={{ color: "#f1f5f9" }}>{status.common_name}</b></span>
+            <span style={{ marginRight: 20 }}>Valid from: <b style={{ color: "#f1f5f9" }}>{fmtDate(status.not_before)}</b></span>
+            <span>Expires: <b style={{ color: expired ? "#f87171" : "#f1f5f9" }}>{fmtDate(status.not_after)}</b></span>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button onClick={() => download("/settings/ssl/certificate", "server.crt")} style={secBtnStyle}>
+              ↓ Download Certificate
+            </button>
+            <button onClick={() => download("/settings/ssl/key", "server.key")} style={secBtnStyle}>
+              ↓ Download Private Key
+            </button>
+            <button onClick={() => download("/settings/ssl/nginx-config", "nginx-ssl.conf")} style={secBtnStyle}>
+              ↓ Download nginx.conf (SSL)
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 1: Generate CSR */}
+      <div style={{ borderTop: "1px solid #334155", paddingTop: 16, marginBottom: 16 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: "#f1f5f9" }}>
+          Step 1 — Generate CSR &amp; Private Key
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          {[
+            ["Common Name (hostname) *", "common_name", "e.g. idm-toolkit.example.com"],
+            ["Organization",             "organization", "e.g. Acme Corp"],
+            ["Organizational Unit",      "organizational_unit", "e.g. IT"],
+            ["Country (2-letter)",       "country",      "e.g. US"],
+            ["State / Province",         "state",        "e.g. California"],
+            ["City",                     "city",         "e.g. San Francisco"],
+            ["Email",                    "email",        "admin@example.com"],
+          ].map(([label, field, placeholder]) => (
+            <div key={field}>
+              <label style={labelStyle}>{label}</label>
+              <input value={csrForm[field]} placeholder={placeholder}
+                onChange={e => setCsrForm(f => ({ ...f, [field]: e.target.value }))}
+                style={inputStyle} />
+            </div>
+          ))}
+          <div>
+            <label style={labelStyle}>Key Size</label>
+            <select value={csrForm.key_size}
+              onChange={e => setCsrForm(f => ({ ...f, key_size: Number(e.target.value) }))}
+              style={inputStyle}>
+              <option value={2048}>2048-bit (standard)</option>
+              <option value={4096}>4096-bit (stronger)</option>
+            </select>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center" }}>
+          <button onClick={generateCsr} disabled={busy} style={{ ...btnStyle, opacity: busy ? 0.7 : 1 }}>
+            {busy ? "Generating…" : "Generate CSR"}
+          </button>
+          {status?.has_csr && (
+            <button onClick={() => download("/settings/ssl/csr", "server.csr")} style={secBtnStyle}>
+              ↓ Download existing CSR
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Show generated CSR inline */}
+      {generatedCsr && (
+        <div style={{ background: "#0f172a", border: "1px solid #334155", borderRadius: 6,
+          padding: 12, marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <span style={{ fontSize: 12, color: "#94a3b8", fontWeight: 600 }}>CSR (submit this to your CA)</span>
+            <button onClick={() => { navigator.clipboard.writeText(generatedCsr); }}
+              style={{ ...secBtnStyle, fontSize: 11, padding: "3px 10px" }}>Copy</button>
+          </div>
+          <pre style={{ margin: 0, fontSize: 11, color: "#7dd3fc", overflowX: "auto",
+            whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{generatedCsr}</pre>
+        </div>
+      )}
+
+      {/* Step 2: Import signed certificate */}
+      <div style={{ borderTop: "1px solid #334155", paddingTop: 16 }}>
+        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10, color: "#f1f5f9" }}>
+          Step 2 — Import Signed Certificate
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <label style={labelStyle}>Signed Certificate (PEM)</label>
+          <textarea rows={6} value={certPem} placeholder={"-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"}
+            onChange={e => setCertPem(e.target.value)}
+            style={{ ...inputStyle, fontFamily: "monospace", fontSize: 11, resize: "vertical" }} />
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={labelStyle}>CA Bundle / Intermediate Chain (optional)</label>
+          <textarea rows={4} value={caBundle} placeholder={"-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"}
+            onChange={e => setCaBundle(e.target.value)}
+            style={{ ...inputStyle, fontFamily: "monospace", fontSize: 11, resize: "vertical" }} />
+        </div>
+        <button onClick={importCert} disabled={busy} style={{ ...btnStyle, opacity: busy ? 0.7 : 1 }}>
+          {busy ? "Importing…" : "Import Certificate"}
+        </button>
+        <p style={{ margin: "12px 0 0", color: "#475569", fontSize: 11, lineHeight: 1.6 }}>
+          After importing, download the certificate, private key, and SSL nginx.conf above. Mount the cert and key
+          into your nginx container at <code style={{ color: "#7dd3fc" }}>/etc/ssl/idm-toolkit/</code> and
+          replace <code style={{ color: "#7dd3fc" }}>nginx.conf</code>, then reload nginx.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+
 export default function Settings({ user }) {
   const [providers, setProviders] = useState([]);
   const [editing,   setEditing]   = useState(null);
@@ -536,6 +726,8 @@ export default function Settings({ user }) {
           </div>
 
           <SecurityPolicies />
+
+          <SslSettings />
 
           <div style={{ background: "#1e293b", borderRadius: 10, padding: "1.25rem 1.5rem" }}>
             <h3 style={{ margin: "0 0 4px", fontSize: 15, fontWeight: 700 }}>Local Users</h3>

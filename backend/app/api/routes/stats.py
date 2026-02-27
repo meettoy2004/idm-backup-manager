@@ -40,7 +40,7 @@ def get_overview(db: Session = Depends(get_db)):
         "server_name":     r[1],
         "hostname":        r[2],
         "is_active":       r[3],
-        "last_job_status": str(r[4]) if r[4] else "never",
+        "last_job_status": r[4].lower() if r[4] else "never",
         "last_job_time":   r[5].isoformat() if r[5] else None,
         "last_job_error":  r[6],
     } for r in rows]

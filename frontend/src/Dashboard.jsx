@@ -212,7 +212,8 @@ export default function Dashboard() {
         <ChartCard title={`Server Health Status (${server_health.length} servers)`}>
           {(() => {
             const counts = server_health.reduce((acc, s) => {
-              acc[s.last_job_status] = (acc[s.last_job_status] || 0) + 1;
+              const st = (s.last_job_status || 'never').toLowerCase();
+              acc[st] = (acc[st] || 0) + 1;
               return acc;
             }, {});
             const healthPieData = Object.entries(counts)
