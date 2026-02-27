@@ -6,7 +6,7 @@ from slowapi.errors import RateLimitExceeded
 from .config import settings
 from .api.routes import servers, backups, jobs, stats, audit, auth, auth_providers
 from .api.routes import organizations, notifications, verifications, restores, dr_templates, reports
-from .api.routes import system_settings
+from .api.routes import system_settings, ssl_settings
 
 # Rate limiter — keyed on client IP
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
@@ -38,6 +38,7 @@ app.include_router(restores.router,       prefix="/api/v1/restores",       tags=
 app.include_router(dr_templates.router,   prefix="/api/v1/dr-templates",   tags=["dr-templates"])
 app.include_router(reports.router,         prefix="/api/v1/reports",        tags=["reports"])
 app.include_router(system_settings.router, prefix="/api/v1/settings",       tags=["settings"])
+app.include_router(ssl_settings.router,    prefix="/api/v1/settings/ssl",    tags=["ssl"])
 
 @app.get("/health")
 @app.get("/health/")
