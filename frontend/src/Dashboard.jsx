@@ -225,8 +225,7 @@ export default function Dashboard() {
               <>
                 <ResponsiveContainer width="100%" height={200}>
                   <PieChart>
-                    <Pie data={healthPieData} cx="50%" cy="50%" outerRadius={80} dataKey="value"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                    <Pie data={healthPieData} cx="50%" cy="50%" outerRadius={80} dataKey="value">
                       {healthPieData.map((d, i) => <Cell key={i} fill={HEALTH_STATUS_COLORS[d.status] || '#999'} />)}
                     </Pie>
                     <Tooltip formatter={(val, name) => [`${val} servers`, name]} />
