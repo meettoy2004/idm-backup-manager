@@ -232,12 +232,15 @@ export default function Dashboard() {
                   </PieChart>
                 </ResponsiveContainer>
                 <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
-                  {healthPieData.map(d => (
-                    <div key={d.name} style={{ fontSize: 12, color: '#666', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: HEALTH_STATUS_COLORS[d.status] || '#999', display: 'inline-block' }} />
-                      {d.name}: {d.value}
-                    </div>
-                  ))}
+                  {healthPieData.map(d => {
+                    const color = HEALTH_STATUS_COLORS[d.status] || '#999';
+                    return (
+                      <div key={d.name} style={{ fontSize: 12, color, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: '50%', background: color, display: 'inline-block' }} />
+                        {d.name}: {d.value}
+                      </div>
+                    );
+                  })}
                 </div>
                 {failedServers.length > 0 && (
                   <div style={{ marginTop: 14, borderTop: '1px solid #FFEBEE', paddingTop: 12 }}>
