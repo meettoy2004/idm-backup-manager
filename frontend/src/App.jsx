@@ -561,7 +561,8 @@ const fmtDate = (iso) => {
 
 // ─── Jobs Tab ────────────────────────────────────────────────────────────────
 function JobsTab({ jobs, servers, setJobs, api, canWrite }) {
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg]         = useState("");
+  const [syncing, setSyncing] = useState(false);
 
   const deleteJob = async (id) => {
     if (!confirm("Delete this job record?")) return;
@@ -573,11 +574,40 @@ function JobsTab({ jobs, servers, setJobs, api, canWrite }) {
     } catch(e) { setMsg("✗ " + (e.response?.data?.detail || "Error")); }
   };
 
+  const syncJobs = async () => {
+    setSyncing(true);
+    setMsg("");
+    try {
+      const r = await api.post("/jobs/sync");
+      // Refresh the full list so newly-imported jobs appear
+      const list = await api.get("/jobs/");
+      setJobs(list.data);
+      const n = r.data.synced;
+      const errs = r.data.errors || [];
+      let m = n > 0 ? `✓ Synced ${n} new job${n === 1 ? "" : "s"} from server journals` : "✓ No new jobs found";
+      if (errs.length) m += ` (${errs.length} server${errs.length > 1 ? "s" : ""} unreachable)`;
+      setMsg(m);
+      setTimeout(() => setMsg(""), 5000);
+    } catch(e) {
+      setMsg("✗ Sync failed: " + (e.response?.data?.detail || e.message));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const STATUS_COLOR = { SUCCESS:"#4ade80", FAILED:"#f87171", RUNNING:"#fbbf24", PENDING:"#94a3b8" };
 
   return (
     <div style={{ padding:"1.5rem" }}>
-      <h2 style={{ margin:"0 0 1rem" }}>Backup Jobs</h2>
+      <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:"1rem" }}>
+        <h2 style={{ margin:0 }}>Backup Jobs</h2>
+        <button onClick={syncJobs} disabled={syncing}
+          style={{ background:"#1e3a5f", color:"#93c5fd", border:"1px solid #3b82f6",
+            borderRadius:6, padding:"5px 14px", cursor: syncing ? "not-allowed" : "pointer",
+            fontSize:13, opacity: syncing ? 0.7 : 1 }}>
+          {syncing ? "Syncing…" : "Sync from servers"}
+        </button>
+      </div>
       {!canWrite && <ReadOnlyBanner />}
       {msg && <div style={{ color: msg.startsWith("✓") ? "#4ade80" : "#f87171", marginBottom:12 }}>{msg}</div>}
       <table style={{ width:"100%", borderCollapse:"collapse", fontSize:13 }}>

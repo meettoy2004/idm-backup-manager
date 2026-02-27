@@ -7,7 +7,11 @@ from ...models.server import Server
 from ...services.ssh_service import SSHService
 from ...services.audit_service import log_action, AuditAction
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -94,6 +98,138 @@ def trigger_backup(request: Request, body: TriggerRequest, db: Session = Depends
     db.commit()
     db.refresh(job)
     return job
+
+@router.post("/sync")
+@router.post("/sync/")
+def sync_jobs_from_journal(db: Session = Depends(get_db)):
+    """SSH to every active server and import ipa-backup.service runs that are not
+    yet in the database.  This surfaces jobs that were triggered by the systemd
+    timer rather than by the /jobs/trigger API endpoint."""
+    servers = db.query(Server).filter(Server.is_active == True).all()
+    synced_count = 0
+    errors = []
+
+    for server in servers:
+        try:
+            runs = _fetch_journal_runs(server)
+            for run in runs:
+                start = run["started_at"]
+                # De-duplicate: ignore if a record already exists within ±2 min of this start time
+                exists = db.query(BackupJob).filter(
+                    BackupJob.server_id == server.id,
+                    BackupJob.started_at >= start - timedelta(minutes=2),
+                    BackupJob.started_at <= start + timedelta(minutes=2),
+                ).first()
+                if not exists:
+                    job = BackupJob(
+                        server_id=server.id,
+                        status=run["status"],
+                        started_at=run["started_at"],
+                        completed_at=run.get("completed_at"),
+                        log_output=run.get("log_output"),
+                        error_message=run.get("error_message"),
+                    )
+                    db.add(job)
+                    synced_count += 1
+            db.commit()
+        except Exception as exc:
+            logger.warning("Journal sync failed for server %s: %s", server.name, exc)
+            errors.append({"server": server.name, "error": str(exc)})
+
+    return {"synced": synced_count, "errors": errors}
+
+
+def _fetch_journal_runs(server) -> list:
+    """Return a list of backup run dicts parsed from the server's systemd journal.
+
+    Each dict has: started_at, completed_at, status ('success'|'failed'),
+    log_output, error_message (optional).
+    """
+    ssh = SSHService()
+    client = ssh.connect(server.hostname, server.port, server.username)
+    try:
+        _, output, _ = ssh.execute_command(
+            client,
+            # --no-pager so we get all lines; --output=json gives one JSON object per line
+            "journalctl -u ipa-backup.service --output=json --no-pager "
+            "--since '30 days ago' 2>/dev/null || true",
+            sudo=True,
+        )
+    finally:
+        client.close()
+
+    entries = []
+    for line in output.strip().splitlines():
+        line = line.strip()
+        if line:
+            try:
+                entries.append(json.loads(line))
+            except Exception:
+                pass
+
+    def _ts(entry) -> Optional[datetime]:
+        raw = entry.get("__REALTIME_TIMESTAMP") or entry.get("_SOURCE_REALTIME_TIMESTAMP")
+        if raw:
+            try:
+                return datetime.fromtimestamp(int(raw) / 1_000_000, tz=timezone.utc)
+            except Exception:
+                pass
+        return None
+
+    def _msg(entry) -> str:
+        m = entry.get("MESSAGE", "")
+        # systemd sometimes encodes MESSAGE as a list of ints (binary)
+        if isinstance(m, list):
+            try:
+                m = bytes(m).decode("utf-8", errors="replace")
+            except Exception:
+                m = str(m)
+        return m
+
+    runs = []
+    current: Optional[dict] = None
+
+    for e in entries:
+        msg = _msg(e)
+        dt = _ts(e)
+
+        # Detect the start of a new backup invocation
+        if ("Starting" in msg and "IdM/FreeIPA backup" in msg) or \
+                ("ipa-backup.service" in msg and "Activating" in msg):
+            current = {"started_at": dt, "lines": [msg]}
+            continue
+
+        if current is None:
+            continue
+
+        current["lines"].append(msg)
+
+        # Successful finish
+        if ("Finished" in msg and "IdM/FreeIPA backup" in msg) or \
+                ("ipa-backup.service" in msg and "Deactivated successfully" in msg):
+            # Only record when we've seen both start AND finish
+            if any("Deactivated successfully" in l or "Finished" in l for l in current["lines"]):
+                runs.append({
+                    "started_at":  current["started_at"],
+                    "completed_at": dt,
+                    "status":      "success",
+                    "log_output":  "\n".join(current["lines"]),
+                })
+                current = None
+
+        # Failed finish
+        elif "ipa-backup.service" in msg and "Failed with result" in msg:
+            runs.append({
+                "started_at":  current["started_at"],
+                "completed_at": dt,
+                "status":      "failed",
+                "log_output":  "\n".join(current["lines"]),
+                "error_message": msg,
+            })
+            current = None
+
+    return runs
+
 
 @router.delete("/{job_id}")
 @router.delete("/{job_id}/")
