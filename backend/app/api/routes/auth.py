@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -18,6 +19,24 @@ from slowapi.util import get_remote_address
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
+
+_PASSWORD_MIN_LEN = 12
+
+def _enforce_password_policy(password: str) -> None:
+    """Raise HTTPException if password does not meet complexity requirements."""
+    if len(password) < _PASSWORD_MIN_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {_PASSWORD_MIN_LEN} characters long."
+        )
+    if not re.search(r"[A-Z]", password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one uppercase letter.")
+    if not re.search(r"[a-z]", password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one lowercase letter.")
+    if not re.search(r"\d", password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one digit.")
+    if not re.search(r"[^A-Za-z0-9]", password):
+        raise HTTPException(status_code=400, detail="Password must contain at least one special character.")
 
 
 def _get_security(db: Session) -> dict:
@@ -181,6 +200,23 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(),
 @router.post("/logout/")
 def logout(request: Request, current_user: User = Depends(get_current_user),
            db: Session = Depends(get_db)):
+    # Denylist the current token in Redis so it cannot be reused after logout
+    from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+    from ...services.auth_service import decode_token
+    import redis as _redis
+    from jose import jwt as _jwt
+    try:
+        auth_header = request.headers.get("Authorization", "")
+        raw_token = auth_header.removeprefix("Bearer ").strip()
+        if raw_token:
+            payload = _jwt.decode(raw_token, settings.SECRET_KEY, algorithms=["HS256"])
+            exp = payload.get("exp", 0)
+            ttl = max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
+            r = _redis.from_url(settings.REDIS_URL, decode_responses=True)
+            r.setex(f"denylist:{raw_token}", ttl, "1")
+    except Exception:
+        pass  # Best-effort; audit log still records the logout
+
     log_action(db, "LOGOUT", user=current_user.email,
         detail=f"User '{current_user.username}' logged out",
         ip_address=request.client.host)
@@ -218,9 +254,8 @@ def complete_password_change(
         if not user.requires_password_change:
             raise HTTPException(status_code=400, detail="Password change not required")
         
-        if len(body.new_password) < 8:
-            raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-        
+        _enforce_password_policy(body.new_password)
+
         user.hashed_password = hash_password(body.new_password)
         user.requires_password_change = False
         user.last_login = datetime.now(timezone.utc)
@@ -261,9 +296,8 @@ def change_own_password(
     if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
     
-    if len(body.new_password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    
+    _enforce_password_policy(body.new_password)
+
     current_user.hashed_password = hash_password(body.new_password)
     current_user.requires_password_change = False
     db.commit()

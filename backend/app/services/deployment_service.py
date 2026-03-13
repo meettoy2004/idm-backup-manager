@@ -1,9 +1,22 @@
+import re
 from .ssh_service import SSHService
 from .systemd_generator import SystemdGenerator
 import hvac
 from typing import Dict, Tuple
 from ..config import settings
 import logging
+
+_SAFE_PATH_RE = re.compile(r'^/[a-zA-Z0-9/_\-\.]+$')
+
+def _validate_deploy_path(path: str, label: str = "path") -> str:
+    """Ensure a config-supplied filesystem path cannot inject shell commands."""
+    if not path or not _SAFE_PATH_RE.match(path):
+        raise ValueError(
+            f"Invalid {label} '{path}': only alphanumeric, /, -, _, . allowed."
+        )
+    if ".." in path.split("/"):
+        raise ValueError(f"Directory traversal detected in {label}.")
+    return path
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +44,18 @@ class DeploymentService:
             # Generate encryption key
             encryption_key = self.systemd_generator.generate_encryption_key()
             
+            # Validate user-supplied paths before embedding in shell commands
+            s3_mount_dir = _validate_deploy_path(config['s3_mount_dir'], 's3_mount_dir')
+            backup_dir   = _validate_deploy_path(config['backup_dir'],   'backup_dir')
+
             # Generate all systemd files
             files = self.systemd_generator.generate_all_files(config)
-            
+
             # Step 1: Create backup directories
             logger.info("Creating backup directories...")
-            self._execute_command(ssh_client, f"mkdir -p {config['s3_mount_dir']}")
-            self._execute_command(ssh_client, f"mkdir -p {config['s3_mount_dir']}/_invalid")
-            self._execute_command(ssh_client, f"mkdir -p {config['backup_dir']}")
+            self._execute_command(ssh_client, f"mkdir -p {s3_mount_dir}")
+            self._execute_command(ssh_client, f"mkdir -p {s3_mount_dir}/_invalid")
+            self._execute_command(ssh_client, f"mkdir -p {backup_dir}")
             
             # Step 2: Deploy retention script
             logger.info("Deploying retention script...")

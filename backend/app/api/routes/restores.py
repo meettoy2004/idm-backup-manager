@@ -5,8 +5,10 @@ from ...config.database import get_db
 from ...models.restore_operation import RestoreOperation
 from ...models.server import Server
 from ...models.backup_job import BackupJob
+from ...models.user import User
 from ...services.restore_service import RestoreService
 from ...services.audit_service import log_action, AuditAction
+from ...api.deps import get_current_user, require_admin, require_editor
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -36,7 +38,8 @@ class RestoreResponse(BaseModel):
 @router.get("", response_model=List[RestoreResponse])
 @router.get("/", response_model=List[RestoreResponse])
 def list_restores(server_id: Optional[int] = None, limit: int = 50, offset: int = 0,
-                  db: Session = Depends(get_db)):
+                  db: Session = Depends(get_db),
+                  current_user: User = Depends(get_current_user)):
     limit = max(1, min(limit, 500))
     query = db.query(RestoreOperation).order_by(RestoreOperation.created_at.desc())
     if server_id:
@@ -45,7 +48,8 @@ def list_restores(server_id: Optional[int] = None, limit: int = 50, offset: int 
 
 @router.get("/{restore_id}", response_model=RestoreResponse)
 @router.get("/{restore_id}/", response_model=RestoreResponse)
-def get_restore(restore_id: int, db: Session = Depends(get_db)):
+def get_restore(restore_id: int, db: Session = Depends(get_db),
+                current_user: User = Depends(get_current_user)):
     r = db.query(RestoreOperation).filter(RestoreOperation.id == restore_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="Restore operation not found")
@@ -54,7 +58,8 @@ def get_restore(restore_id: int, db: Session = Depends(get_db)):
 @router.post("", response_model=RestoreResponse)
 @router.post("/", response_model=RestoreResponse)
 def create_restore(body: RestoreCreate, request: Request,
-                   background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+                   background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+                   current_user: User = Depends(require_editor)):
     server = db.query(Server).filter(Server.id == body.server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -69,6 +74,7 @@ def create_restore(body: RestoreCreate, request: Request,
         server_id=body.server_id,
         restore_path=body.restore_path,
         restore_status="pending",
+        requested_by=current_user.id,
     )
     db.add(restore_op)
     db.commit()
@@ -88,7 +94,8 @@ def create_restore(body: RestoreCreate, request: Request,
 
     background_tasks.add_task(run_restore)
 
-    log_action(db, AuditAction.SERVER_CREATED, resource="restore_operations",
+    log_action(db, "RESTORE_TRIGGERED", user=current_user.email,
+        resource="restore_operations",
         resource_id=restore_op.id,
         detail=f"Restore triggered on server '{server.name}' for job {body.job_id}",
         ip_address=request.client.host)
@@ -97,7 +104,8 @@ def create_restore(body: RestoreCreate, request: Request,
 
 @router.delete("/{restore_id}")
 @router.delete("/{restore_id}/")
-def cancel_restore(restore_id: int, db: Session = Depends(get_db)):
+def cancel_restore(restore_id: int, request: Request, db: Session = Depends(get_db),
+                   current_user: User = Depends(require_editor)):
     r = db.query(RestoreOperation).filter(RestoreOperation.id == restore_id).first()
     if not r:
         raise HTTPException(status_code=404, detail="Restore operation not found")
@@ -105,4 +113,8 @@ def cancel_restore(restore_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Cannot cancel a restore in '{r.restore_status}' state")
     r.restore_status = "cancelled"
     db.commit()
+    log_action(db, AuditAction.RESTORE_CANCELLED, user=current_user.email,
+        resource="restore_operations", resource_id=restore_id,
+        detail=f"Restore operation {restore_id} cancelled",
+        ip_address=request.client.host)
     return {"message": "Restore cancelled"}

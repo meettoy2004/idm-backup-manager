@@ -6,7 +6,9 @@ from ...config.database import get_db
 from ...models.server import Server
 from ...models.backup_config import BackupConfig
 from ...models.backup_job import BackupJob
+from ...models.user import User
 from ...services.audit_service import log_action, AuditAction
+from ...api.deps import get_current_user, require_admin, require_editor
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 
@@ -40,25 +42,28 @@ class ServerResponse(BaseModel):
 
 @router.get("", response_model=List[ServerResponse])
 @router.get("/", response_model=List[ServerResponse])
-def list_servers(db: Session = Depends(get_db)):
+def list_servers(db: Session = Depends(get_db),
+                 current_user: User = Depends(get_current_user)):
     return db.query(Server).all()
 
 @router.post("", response_model=ServerResponse)
 @router.post("/", response_model=ServerResponse)
-def create_server(server: ServerCreate, request: Request, db: Session = Depends(get_db)):
+def create_server(server: ServerCreate, request: Request, db: Session = Depends(get_db),
+                  current_user: User = Depends(require_editor)):
     db_server = Server(**server.dict())
     db.add(db_server)
     db.commit()
     db.refresh(db_server)
-    log_action(db, AuditAction.SERVER_CREATED, resource="servers",
-        resource_id=db_server.id,
+    log_action(db, AuditAction.SERVER_CREATED, user=current_user.email,
+        resource="servers", resource_id=db_server.id,
         detail=f"Created server '{db_server.name}' ({db_server.hostname})",
         ip_address=request.client.host)
     return db_server
 
 @router.get("/{server_id}", response_model=ServerResponse)
 @router.get("/{server_id}/", response_model=ServerResponse)
-def get_server(server_id: int, db: Session = Depends(get_db)):
+def get_server(server_id: int, db: Session = Depends(get_db),
+               current_user: User = Depends(get_current_user)):
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -66,31 +71,37 @@ def get_server(server_id: int, db: Session = Depends(get_db)):
 
 @router.put("/{server_id}")
 @router.put("/{server_id}/")
-def update_server(server_id: int, updates: dict, db: Session = Depends(get_db)):
+def update_server(server_id: int, updates: ServerCreate, request: Request,
+                  db: Session = Depends(get_db),
+                  current_user: User = Depends(require_editor)):
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
-    
-    if 'name' in updates:
-        server.name = updates['name']
-    if 'hostname' in updates:
-        server.hostname = updates['hostname']
-    if 'port' in updates:
-        server.port = updates['port']
-    if 'username' in updates:
-        server.username = updates['username']
-    if 'description' in updates:
-        server.description = updates['description']
-    if 'is_active' in updates:
-        server.is_active = updates['is_active']
-    
+
+    update_data = updates.dict(exclude_unset=True)
+    if 'name' in update_data:
+        server.name = update_data['name']
+    if 'hostname' in update_data:
+        server.hostname = update_data['hostname']
+    if 'port' in update_data:
+        server.port = update_data['port']
+    if 'username' in update_data:
+        server.username = update_data['username']
+    if 'description' in update_data:
+        server.description = update_data['description']
+
     db.commit()
     db.refresh(server)
+    log_action(db, AuditAction.SERVER_UPDATED, user=current_user.email,
+        resource="servers", resource_id=server_id,
+        detail=f"Updated server '{server.name}'",
+        ip_address=request.client.host)
     return server
 
 @router.delete("/{server_id}")
 @router.delete("/{server_id}/")
-def delete_server(server_id: int, request: Request, db: Session = Depends(get_db)):
+def delete_server(server_id: int, request: Request, db: Session = Depends(get_db),
+                  current_user: User = Depends(require_admin)):
     server = db.query(Server).filter(Server.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -102,15 +113,16 @@ def delete_server(server_id: int, request: Request, db: Session = Depends(get_db
     db.delete(server)
     db.commit()
     
-    log_action(db, AuditAction.SERVER_DELETED, resource="servers",
-        resource_id=server_id,
+    log_action(db, AuditAction.SERVER_DELETED, user=current_user.email,
+        resource="servers", resource_id=server_id,
         detail=f"Deleted server '{name}'",
         ip_address=request.client.host)
     return {"message": f"Server {name} deleted"}
 
 @router.get("/{server_id}/system-status")
 @router.get("/{server_id}/system-status/")
-def get_server_system_status(server_id: int, db: Session = Depends(get_db)):
+def get_server_system_status(server_id: int, db: Session = Depends(get_db),
+                              current_user: User = Depends(get_current_user)):
     """SSH into server and return disk usage + IPA service status."""
     from ...services.ssh_service import SSHService
 
@@ -180,7 +192,8 @@ def _parse_ipactl(output: str):
 
 @router.get("/{server_id}/check-subscription")
 @router.get("/{server_id}/check-subscription/")
-def check_subscription_manager(server_id: int, db: Session = Depends(get_db)):
+def check_subscription_manager(server_id: int, db: Session = Depends(get_db),
+                                current_user: User = Depends(get_current_user)):
     """Check if subscription-manager is configured and enabled, then save to database"""
     from ...services.ssh_service import SSHService
     

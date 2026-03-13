@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -7,8 +8,23 @@ from ..models.backup_job import BackupJob
 from ..models.server import Server
 from ..models.restore_operation import RestoreOperation
 from .ssh_service import SSHService
+from .audit_service import log_action, AuditAction
 
 logger = logging.getLogger(__name__)
+
+# Allow only safe absolute path characters: letters, digits, /, -, _, .
+_SAFE_PATH_RE = re.compile(r'^/[a-zA-Z0-9/_\-\.]+$')
+
+def _validate_path(path: str, label: str = "path") -> str:
+    """Reject paths that could enable shell injection or directory traversal."""
+    if not path or not _SAFE_PATH_RE.match(path):
+        raise ValueError(
+            f"Invalid {label}: '{path}'. Only alphanumeric characters, "
+            "/, -, _, and . are allowed."
+        )
+    if ".." in path.split("/"):
+        raise ValueError(f"Directory traversal detected in {label}.")
+    return path
 
 
 class RestoreService:
@@ -51,7 +67,19 @@ class RestoreService:
                 client.close()
                 return self._fail(db, restore_op, "No backup file found on server")
 
-            restore_path = restore_op.restore_path or "/var/lib/ipa/restore"
+            # Validate the server-returned path before embedding in shell commands
+            try:
+                backup_file = _validate_path(backup_file, "backup_file")
+            except ValueError as e:
+                client.close()
+                return self._fail(db, restore_op, f"Unexpected backup file path from server: {e}")
+
+            raw_restore_path = restore_op.restore_path or "/var/lib/ipa/restore"
+            try:
+                restore_path = _validate_path(raw_restore_path, "restore_path")
+            except ValueError as e:
+                client.close()
+                return self._fail(db, restore_op, str(e))
 
             # Ensure restore directory exists
             self.ssh.execute_command(client, f'mkdir -p "{restore_path}"', sudo=True)
@@ -110,6 +138,9 @@ class RestoreService:
             db.commit()
             db.refresh(restore_op)
             logger.info(f"Restore {restore_op.id} completed on {server.name} → {restore_path}")
+            log_action(db, AuditAction.RESTORE_COMPLETED, user="system",
+                resource="restore_operations", resource_id=restore_op.id,
+                detail=f"Restore {restore_op.id} completed on server '{server.name}' → {restore_path}")
             return restore_op
 
         except Exception as e:
@@ -127,4 +158,8 @@ class RestoreService:
         db.commit()
         db.refresh(restore_op)
         logger.error(f"Restore {restore_op.id} failed: {reason}")
+        log_action(db, AuditAction.RESTORE_FAILED, user="system",
+            resource="restore_operations", resource_id=restore_op.id,
+            detail=f"Restore {restore_op.id} failed: {reason[:500]}",
+            status="failure")
         return restore_op
